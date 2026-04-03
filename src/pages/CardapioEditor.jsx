@@ -20,13 +20,30 @@ function ItemEditor({ item, onChange, onRemove }) {
             placeholder="Nome do item"
             className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-500/20 outline-none"
           />
-          <textarea
-            value={item.desc || ''}
-            onChange={e => onChange({ ...item, desc: e.target.value })}
-            placeholder="Descrição (opcional)"
-            rows={2}
-            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-500/20 outline-none resize-none"
-          />
+          <div className="flex gap-2">
+            <textarea
+              value={item.desc || ''}
+              onChange={e => onChange({ ...item, desc: e.target.value })}
+              placeholder="Descrição (opcional)"
+              rows={2}
+              className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-500/20 outline-none resize-none"
+            />
+            <div className="shrink-0 w-24">
+              <div className="relative">
+                <span className="absolute left-2.5 top-2 text-xs text-slate-400">R$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={item.preco || ''}
+                  onChange={e => onChange({ ...item, preco: e.target.value ? parseFloat(e.target.value) : null })}
+                  placeholder="0,00"
+                  className="w-full pl-8 pr-2 py-2 rounded-lg border border-slate-200 text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-500/20 outline-none text-right"
+                />
+              </div>
+              <span className="text-[10px] text-slate-400 block text-center mt-0.5">Preço</span>
+            </div>
+          </div>
         </div>
         <button
           onClick={onRemove}
@@ -58,7 +75,7 @@ function CategoryEditor({ category, onChange, onRemove }) {
   function addItem() {
     onChange({
       ...category,
-      itens: [...category.itens, { nome: '', desc: '' }]
+      itens: [...category.itens, { nome: '', desc: '', preco: null }]
     })
   }
 
