@@ -47,7 +47,7 @@ export default function Login() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-500 text-white text-2xl font-bold mb-4">G</div>
-          <h1 className="text-2xl font-bold text-white">Gestão de Restaurantes</h1>
+          <h1 className="text-2xl font-bold text-white">Clientes Admin</h1>
           <p className="text-slate-400 mt-1">Faça login para continuar</p>
         </div>
 

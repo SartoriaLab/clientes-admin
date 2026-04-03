@@ -89,7 +89,7 @@ export default function AdminRestaurantes() {
           // Note: creating a user with createUserWithEmailAndPassword signs in as that user
           // The admin will need to re-login. We show a notice.
           alert('Restaurante e conta criados! Você será redirecionado para o login pois a criação de conta troca o usuário ativo.')
-          window.location.href = '/cardapio-admin/login'
+          window.location.href = '/clientes-admin/login'
           return
         } catch (authErr) {
           if (authErr.code === 'auth/email-already-in-use') {
