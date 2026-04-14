@@ -62,6 +62,14 @@ function IconShirt() {
     </svg>
   )
 }
+function IconCreditCard() {
+  return (
+    <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2 10h20" />
+    </svg>
+  )
+}
 function IconLogout() {
   return (
     <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
@@ -156,6 +164,7 @@ export default function Layout() {
             <>
               <SideItem to="/admin/restaurantes" icon={<IconBuilding />} label="Clientes" active={isActive('/admin/restaurantes')} />
               <SideItem to="/admin/usuarios" icon={<IconUsers />} label="Usuários" active={isActive('/admin/usuarios')} />
+              <SideItem to="/admin/gestao" icon={<IconCreditCard />} label="Gestão" active={isActive('/admin/gestao')} />
             </>
           )}
         </div>
