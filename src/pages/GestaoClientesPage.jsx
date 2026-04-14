@@ -652,7 +652,7 @@ export default function GestaoClientesPage() {
 
                     {/* Link painel do cliente */}
                     <a
-                      href={`/restaurante/${r.slug}/${r.type === 'garagem' ? 'veiculos' : r.type === 'roupas' ? 'roupas' : 'cardapio'}`}
+                      href={`/restaurante/${r.slug}/${r.type === 'garagem' ? 'veiculos' : r.type === 'roupas' ? 'roupas' : r.type === 'outros' ? 'info' : 'cardapio'}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       title="Abrir painel do cliente"

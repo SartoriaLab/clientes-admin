@@ -106,6 +106,9 @@ function clientSections(slug, type) {
     { to: `${base}/roupas`,    icon: <IconShirt />, label: 'Catálogo'    },
     { to: `${base}/info`,      icon: <IconInfo />,  label: 'Informações' },
   ]
+  if (type === 'outros') return [
+    { to: `${base}/info`,      icon: <IconInfo />,  label: 'Informações' },
+  ]
   return [
     { to: `${base}/cardapio`,  icon: <IconMenu />,  label: 'Cardápio'    },
     { to: `${base}/promocoes`, icon: <IconTag />,   label: 'Promoções'   },

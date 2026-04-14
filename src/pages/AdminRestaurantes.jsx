@@ -99,6 +99,28 @@ export default function AdminRestaurantes() {
           },
           updatedAt: new Date().toISOString()
         })
+      } else if (form.type === 'outros') {
+        await setDoc(doc(db, 'restaurants', form.slug, 'data', 'businessInfo'), {
+          content: {
+            name: form.name,
+            city: '',
+            slogan: '',
+            tagline: '',
+            whatsapp: '',
+            whatsappNumber: '',
+            phone: '',
+            address: '',
+            neighborhood: '',
+            cityState: '',
+            cep: '',
+            hours: { weekdays: '', saturday: '' },
+            instagram: '',
+            facebook: '',
+            googleMapsEmbed: '',
+            googleMapsLink: ''
+          },
+          updatedAt: new Date().toISOString()
+        })
       } else {
         await setDoc(doc(db, 'restaurants', form.slug, 'data', 'cardapio'), {
           content: [],
@@ -160,12 +182,15 @@ export default function AdminRestaurantes() {
   // Helpers de tipo
   const isGaragem = (r) => r.type === 'garagem'
   const isRoupas = (r) => r.type === 'roupas'
-  const typeLabel = (r) => isGaragem(r) ? 'Garagem' : isRoupas(r) ? 'Roupas' : 'Restaurante'
+  const isOutros = (r) => r.type === 'outros'
+  const typeLabel = (r) => isGaragem(r) ? 'Garagem' : isRoupas(r) ? 'Roupas' : isOutros(r) ? 'Outros' : 'Restaurante'
   const typeBadgeClass = (r) => isGaragem(r)
     ? 'bg-blue-50 text-blue-700'
     : isRoupas(r)
       ? 'bg-rose-50 text-rose-700'
-      : 'bg-amber-50 text-amber-700'
+      : isOutros(r)
+        ? 'bg-slate-100 text-slate-600'
+        : 'bg-amber-50 text-amber-700'
 
   if (loading) {
     return (
@@ -242,6 +267,13 @@ export default function AdminRestaurantes() {
                 <div>
                   <span className="text-sm font-medium text-slate-800">👔 Loja de Roupas</span>
                   <p className="text-[11px] text-slate-400">Catálogo e informações</p>
+                </div>
+              </label>
+              <label className={`flex-1 flex items-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition ${form.type === 'outros' ? 'border-slate-500 bg-slate-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                <input type="radio" name="type" value="outros" checked={form.type === 'outros'} onChange={e => setForm(prev => ({ ...prev, type: e.target.value }))} className="accent-slate-500" />
+                <div>
+                  <span className="text-sm font-medium text-slate-800">📦 Outros</span>
+                  <p className="text-[11px] text-slate-400">Apenas informações</p>
                 </div>
               </label>
             </div>
@@ -329,6 +361,13 @@ export default function AdminRestaurantes() {
                     Informações
                   </Link>
                 </>
+              ) : isOutros(r) ? (
+                <Link
+                  to={`/restaurante/${r.slug}/info`}
+                  className="text-xs px-3 py-1.5 bg-teal-50 text-teal-700 rounded-lg hover:bg-teal-100 transition"
+                >
+                  Informações
+                </Link>
               ) : (
                 <>
                   <Link
