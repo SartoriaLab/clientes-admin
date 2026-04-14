@@ -277,10 +277,39 @@ export default function RelatorioSEOPage() {
     setGenerating(false)
   }
 
+  function stripOklch(element) {
+    // Remove oklch colors from computed styles that html2canvas can't parse
+    const all = element.querySelectorAll('*')
+    const targets = [element, ...all]
+    targets.forEach(el => {
+      const computed = window.getComputedStyle(el)
+      const props = ['color', 'background-color', 'border-color', 'border-top-color', 'border-bottom-color', 'border-left-color', 'border-right-color']
+      props.forEach(prop => {
+        const val = computed.getPropertyValue(prop)
+        if (val && val.includes('oklch')) {
+          // Replace oklch with transparent or a fallback
+          if (prop === 'color') {
+            el.style.setProperty(prop, '#1e293b')
+          } else if (prop === 'background-color') {
+            el.style.setProperty(prop, '#ffffff')
+          } else {
+            el.style.setProperty(prop, '#e2e8f0')
+          }
+        }
+      })
+    })
+  }
+
   async function handleExportPDF() {
     if (!reportRef.current) return
     setExporting(true)
     try {
+      // Clone the report element to avoid modifying the original
+      const clone = reportRef.current.cloneNode(true)
+      clone.style.width = reportRef.current.offsetWidth + 'px'
+      document.body.appendChild(clone)
+      stripOklch(clone)
+
       const filename = `relatorio-seo-${slug}-${new Date().toISOString().slice(0, 7)}.pdf`
       await html2pdf()
         .set({
@@ -290,8 +319,10 @@ export default function RelatorioSEOPage() {
           html2canvas: { scale: 2, useCORS: true },
           jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
         })
-        .from(reportRef.current)
+        .from(clone)
         .save()
+
+      document.body.removeChild(clone)
     } catch (err) {
       setError('Erro ao exportar PDF: ' + err.message)
     }
