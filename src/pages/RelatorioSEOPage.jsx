@@ -114,21 +114,22 @@ async function fetchSummary(siteUrl, token) {
   return resp.json()
 }
 
-function KpiCard({ label, value, icon, color }) {
+function KpiCard({ label, value, icon, color, description }) {
   const colors = {
-    blue:   { bg: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8' },
-    green:  { bg: '#f0fdf4', border: '#bbf7d0', text: '#15803d' },
-    amber:  { bg: '#fffbeb', border: '#fde68a', text: '#b45309' },
-    purple: { bg: '#faf5ff', border: '#d8b4fe', text: '#7e22ce' },
+    blue:   { bg: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8', descColor: '#3b82f6' },
+    green:  { bg: '#f0fdf4', border: '#bbf7d0', text: '#15803d', descColor: '#22c55e' },
+    amber:  { bg: '#fffbeb', border: '#fde68a', text: '#b45309', descColor: '#f59e0b' },
+    purple: { bg: '#faf5ff', border: '#d8b4fe', text: '#7e22ce', descColor: '#a855f7' },
   }
   const c = colors[color] || colors.blue
   return (
-    <div style={{ backgroundColor: c.bg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '1rem', padding: '1.5rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+    <div style={{ backgroundColor: c.bg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '1rem', padding: '1.25rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
         <span style={{ fontSize: '1.125rem' }}>{icon}</span>
-        <p style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.7 }}>{label}</p>
+        <p style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.7, margin: 0 }}>{label}</p>
       </div>
-      <p style={{ fontSize: '1.875rem', fontWeight: 700 }}>{value}</p>
+      <p style={{ fontSize: '1.875rem', fontWeight: 700, margin: '0.25rem 0' }}>{value}</p>
+      {description && <p style={{ fontSize: '0.7rem', color: '#64748b', margin: 0, lineHeight: 1.3 }}>{description}</p>}
     </div>
   )
 }
@@ -387,33 +388,71 @@ export default function RelatorioSEOPage() {
         <div ref={reportRef} style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '1rem', padding: '2rem', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
           {/* Report Header */}
           <div style={{ textAlign: 'center', marginBottom: '2rem', paddingBottom: '1.5rem', borderBottom: '1px solid #f1f5f9' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>{restaurant.name}</h2>
-            <p style={{ fontSize: '0.875rem', color: '#64748b', marginTop: '0.25rem' }}>
-              Relatório de Desempenho SEO — {formatDateBR(report.period.start)} a {formatDateBR(report.period.end)}
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>{restaurant.name}</h2>
+            <p style={{ fontSize: '1rem', color: '#64748b', marginTop: '0.5rem' }}>
+              Como seu site apareceu no Google
+            </p>
+            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '0.25rem' }}>
+              Período: {formatDateBR(report.period.start)} a {formatDateBR(report.period.end)}
+            </p>
+          </div>
+
+          {/* Intro explanation */}
+          <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.75rem', padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
+            <p style={{ fontSize: '0.8rem', color: '#475569', margin: 0, lineHeight: 1.6 }}>
+              Este relatório mostra como as pessoas encontraram seu site pesquisando no Google.
+              Abaixo você verá quantas vezes seu site apareceu nos resultados, quantas pessoas clicaram e quais palavras usaram para te encontrar.
             </p>
           </div>
 
           {/* KPI Cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
-            <KpiCard label="Cliques" value={formatNumber(report.summary.clicks)} icon="🖱️" color="blue" />
-            <KpiCard label="Impressões" value={formatNumber(report.summary.impressions)} icon="👁️" color="green" />
-            <KpiCard label="CTR" value={formatPercent(report.summary.ctr)} icon="📈" color="amber" />
-            <KpiCard label="Posição Média" value={formatPosition(report.summary.position)} icon="📍" color="purple" />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
+            <KpiCard
+              label="Cliques"
+              value={formatNumber(report.summary.clicks)}
+              icon="🖱️"
+              color="blue"
+              description="Quantas vezes alguém clicou no seu site nos resultados do Google"
+            />
+            <KpiCard
+              label="Impressões"
+              value={formatNumber(report.summary.impressions)}
+              icon="👁️"
+              color="green"
+              description="Quantas vezes seu site apareceu nos resultados de busca do Google"
+            />
+            <KpiCard
+              label="Taxa de Cliques (CTR)"
+              value={formatPercent(report.summary.ctr)}
+              icon="📈"
+              color="amber"
+              description="De todas as vezes que seu site apareceu, esse % das pessoas clicou. Quanto maior, melhor!"
+            />
+            <KpiCard
+              label="Posição Média"
+              value={formatPosition(report.summary.position)}
+              icon="📍"
+              color="purple"
+              description="Em que posição do Google seu site aparece em média. Posição 1 = primeiro resultado"
+            />
           </div>
 
           {/* Top Queries */}
           {report.topQueries.length > 0 && (
             <div style={{ marginBottom: '2rem' }}>
-              <h3 style={{ fontSize: '0.75rem', fontWeight: 600, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>
-                Top 10 — Termos Mais Buscados
+              <h3 style={{ fontSize: '0.875rem', fontWeight: 700, color: '#1e293b', marginBottom: '0.25rem' }}>
+                O que as pessoas pesquisaram para te encontrar
               </h3>
-              <table style={{ width: '100%', fontSize: '0.875rem', borderCollapse: 'collapse', border: '1px solid #e2e8f0', borderRadius: '0.75rem' }}>
+              <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.75rem' }}>
+                Estes são os termos que as pessoas digitaram no Google e que fizeram seu site aparecer nos resultados.
+              </p>
+              <table style={{ width: '100%', fontSize: '0.875rem', borderCollapse: 'collapse', border: '1px solid #e2e8f0' }}>
                 <thead>
                   <tr style={{ backgroundColor: '#f8fafc' }}>
-                    <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>#</th>
-                    <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Termo de busca</th>
-                    <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Cliques</th>
-                    <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Impressões</th>
+                    <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>#</th>
+                    <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>O que pesquisaram</th>
+                    <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Clicaram</th>
+                    <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Viram no Google</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -421,7 +460,7 @@ export default function RelatorioSEOPage() {
                     <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
                       <td style={{ padding: '0.625rem 1rem', color: '#94a3b8', fontWeight: 500 }}>{i + 1}</td>
                       <td style={{ padding: '0.625rem 1rem', color: '#334155', fontWeight: 500 }}>{q.query}</td>
-                      <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#475569' }}>{formatNumber(q.clicks)}</td>
+                      <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#1d4ed8', fontWeight: 600 }}>{formatNumber(q.clicks)}</td>
                       <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#64748b' }}>{formatNumber(q.impressions)}</td>
                     </tr>
                   ))}
@@ -433,29 +472,33 @@ export default function RelatorioSEOPage() {
           {/* Top Pages */}
           {report.topPages.length > 0 && (
             <div style={{ marginBottom: '2rem' }}>
-              <h3 style={{ fontSize: '0.75rem', fontWeight: 600, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>
-                Top 5 — Páginas Mais Acessadas
+              <h3 style={{ fontSize: '0.875rem', fontWeight: 700, color: '#1e293b', marginBottom: '0.25rem' }}>
+                Páginas mais visitadas do seu site
               </h3>
-              <table style={{ width: '100%', fontSize: '0.875rem', borderCollapse: 'collapse', border: '1px solid #e2e8f0', borderRadius: '0.75rem' }}>
+              <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.75rem' }}>
+                Estas são as páginas do seu site que mais receberam visitas vindas do Google.
+              </p>
+              <table style={{ width: '100%', fontSize: '0.875rem', borderCollapse: 'collapse', border: '1px solid #e2e8f0' }}>
                 <thead>
                   <tr style={{ backgroundColor: '#f8fafc' }}>
-                    <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>#</th>
-                    <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Página</th>
-                    <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Cliques</th>
-                    <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Impressões</th>
+                    <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>#</th>
+                    <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Página</th>
+                    <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Clicaram</th>
+                    <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Viram no Google</th>
                   </tr>
                 </thead>
                 <tbody>
                   {report.topPages.map((p, i) => {
                     let displayUrl = p.page
                     try { displayUrl = new URL(p.page).pathname } catch {}
+                    if (displayUrl === '/') displayUrl = 'Página inicial'
                     return (
                       <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
                         <td style={{ padding: '0.625rem 1rem', color: '#94a3b8', fontWeight: 500 }}>{i + 1}</td>
                         <td style={{ padding: '0.625rem 1rem', color: '#334155', fontWeight: 500, maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.page}>
                           {displayUrl}
                         </td>
-                        <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#475569' }}>{formatNumber(p.clicks)}</td>
+                        <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#1d4ed8', fontWeight: 600 }}>{formatNumber(p.clicks)}</td>
                         <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#64748b' }}>{formatNumber(p.impressions)}</td>
                       </tr>
                     )
@@ -464,6 +507,17 @@ export default function RelatorioSEOPage() {
               </table>
             </div>
           )}
+
+          {/* Summary tip */}
+          <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '0.75rem', padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
+            <p style={{ fontSize: '0.8rem', fontWeight: 600, color: '#92400e', margin: '0 0 0.25rem 0' }}>💡 O que esses números significam?</p>
+            <p style={{ fontSize: '0.75rem', color: '#78350f', margin: 0, lineHeight: 1.6 }}>
+              {report.summary.clicks > 0
+                ? `Neste mês, ${formatNumber(report.summary.impressions)} pessoas viram seu site no Google e ${formatNumber(report.summary.clicks)} delas clicaram para visitar. Seu site aparece em média na posição ${formatPosition(report.summary.position)} dos resultados de busca.`
+                : 'Seu site ainda está começando a aparecer no Google. É normal levar algumas semanas para os resultados crescerem. Continue mantendo o site atualizado!'
+              }
+            </p>
+          </div>
 
           {/* Footer */}
           <div style={{ paddingTop: '1.5rem', borderTop: '1px solid #f1f5f9', textAlign: 'center' }}>
