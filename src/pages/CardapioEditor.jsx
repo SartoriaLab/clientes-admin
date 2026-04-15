@@ -673,15 +673,28 @@ export default function CardapioEditor() {
     setSaving(false)
   }
 
-  if (loading) {
-    return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-amber-500"></div>
-      </div>
-    )
-  }
-
+  // O modal é renderizado no top-level do return, SEMPRE na mesma posição
+  // da árvore JSX (primeiro filho do fragment). Isso garante que React
+  // reconcilia ele como o mesmo elemento e nunca o desmonta, mesmo durante
+  // um re-render que troca entre loading spinner e o editor completo.
+  // Sem isso, o state do modal (logs, success) era perdido a cada re-render
+  // que alternasse os returns.
   return (
+    <>
+      <SyncMenudinoModal
+        isOpen={syncModalOpen}
+        onClose={() => setSyncModalOpen(false)}
+        restaurantSlug={slug}
+        onSyncComplete={() => { loadCardapio({ silent: true }); setDirty(false); }}
+      />
+
+      {loading && (
+        <div className="flex justify-center py-20">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-amber-500"></div>
+        </div>
+      )}
+
+      {!loading && (
     <div>
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
@@ -713,12 +726,6 @@ export default function CardapioEditor() {
         </div>
       </div>
 
-      <SyncMenudinoModal
-        isOpen={syncModalOpen}
-        onClose={() => setSyncModalOpen(false)}
-        restaurantSlug={slug}
-        onSyncComplete={() => { loadCardapio({ silent: true }); setDirty(false); }}
-      />
 
       {/* Search */}
       <div className="relative mb-4">
@@ -856,5 +863,7 @@ export default function CardapioEditor() {
         </div>
       )}
     </div>
+      )}
+    </>
   )
 }
