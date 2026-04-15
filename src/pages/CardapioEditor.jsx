@@ -533,8 +533,11 @@ export default function CardapioEditor() {
   const [syncModalOpen, setSyncModalOpen] = useState(false)
   const tabInputRef = useRef(null)
 
-  const loadCardapio = useCallback(async () => {
-    setLoading(true)
+  const loadCardapio = useCallback(async ({ silent = false } = {}) => {
+    // Se silent, não toca no loading — evita remount de componentes filhos
+    // (ex: o SyncMenudinoModal perderia state se o editor trocasse a view
+    // para o spinner via early return `if (loading)`).
+    if (!silent) setLoading(true)
     try {
       const restSnap = await getDoc(doc(db, 'restaurants', slug))
       if (restSnap.exists()) setRestaurantName(restSnap.data().name)
@@ -544,7 +547,7 @@ export default function CardapioEditor() {
     } catch (err) {
       console.error('Erro ao carregar cardápio:', err)
     }
-    setLoading(false)
+    if (!silent) setLoading(false)
   }, [slug])
 
   // Warn on unsaved changes
@@ -714,7 +717,7 @@ export default function CardapioEditor() {
         isOpen={syncModalOpen}
         onClose={() => setSyncModalOpen(false)}
         restaurantSlug={slug}
-        onSyncComplete={() => { loadCardapio(); setDirty(false); }}
+        onSyncComplete={() => { loadCardapio({ silent: true }); setDirty(false); }}
       />
 
       {/* Search */}
