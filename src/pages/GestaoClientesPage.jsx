@@ -510,7 +510,7 @@ export default function GestaoClientesPage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
         <KpiCard label="MRR" value={brl.format(mrr)} sub="receita mensal recorrente" color="green" />
         <KpiCard label="Ticket médio" value={brl.format(avgTicket)} sub="por cliente ativo" color="blue" />
         <KpiCard label="Clientes ativos" value={activeList.length} sub={`de ${restaurants.length} total`} color="slate" />
