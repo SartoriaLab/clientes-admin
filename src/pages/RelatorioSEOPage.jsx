@@ -1146,7 +1146,6 @@ export default function RelatorioSEOPage() {
                   <tr style={{ backgroundColor: '#f8fafc' }}>
                     <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>#</th>
                     <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>O que pesquisaram</th>
-                    <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Clicaram</th>
                     <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Viram no Google</th>
                   </tr>
                 </thead>
@@ -1155,7 +1154,6 @@ export default function RelatorioSEOPage() {
                     <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
                       <td style={{ padding: '0.625rem 1rem', color: '#94a3b8', fontWeight: 500 }}>{i + 1}</td>
                       <td style={{ padding: '0.625rem 1rem', color: '#334155', fontWeight: 500 }}>{q.query}</td>
-                      <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#1d4ed8', fontWeight: 600 }}>{formatNumber(q.clicks)}</td>
                       <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#64748b' }}>{formatNumber(q.impressions)}</td>
                     </tr>
                   ))}
@@ -1178,7 +1176,6 @@ export default function RelatorioSEOPage() {
                   <tr style={{ backgroundColor: '#f8fafc' }}>
                     <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>#</th>
                     <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Página</th>
-                    <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Clicaram</th>
                     <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Viram no Google</th>
                   </tr>
                 </thead>
@@ -1193,7 +1190,6 @@ export default function RelatorioSEOPage() {
                         <td style={{ padding: '0.625rem 1rem', color: '#334155', fontWeight: 500, maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.page}>
                           {displayUrl}
                         </td>
-                        <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#1d4ed8', fontWeight: 600 }}>{formatNumber(p.clicks)}</td>
                         <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#64748b' }}>{formatNumber(p.impressions)}</td>
                       </tr>
                     )
