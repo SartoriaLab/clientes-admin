@@ -1,0 +1,7 @@
+name = "marieta-sync"
+main = "src/index.js"
+compatibility_date = "2026-04-01"
+
+# Secrets (configurados via `wrangler secret put`):
+#   SERVICE_ACCOUNT_JSON — conteudo do JSON do service account do Firebase
+#   SHARED_SECRET        — token aleatorio que o bookmarklet envia no body

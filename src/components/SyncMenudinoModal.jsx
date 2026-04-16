@@ -24,9 +24,47 @@ import { syncMenudinoCardapio, tryParseBookmarkletPayload } from '../lib/menudin
 //
 // Uso: o user copia este texto via botão "Copiar código", abre o Menudino,
 // F12 → Console → Ctrl+V → Enter. O JSON resultante fica no clipboard pra
-// ser colado no cardapio-admin. Não usa bookmarklet porque React 18+ bloqueia
-// javascript: URLs em href como precaução anti-XSS.
+// ser colado no cardapio-admin. Fluxo manual (fallback); o caminho preferido
+// para marieta-bistro é o bookmarklet que posta direto no Worker.
 const SNIPPET_CODE = `(async()=>{try{if(!location.hostname.includes('menudino.com')){alert('Voce nao esta em *.menudino.com. Host: '+location.hostname);return;}var r=await fetch('/',{cache:'no-store'});if(!r.ok){alert('fetch / falhou: HTTP '+r.status);return;}var t=r.headers.get('app-access-token');if(!t){alert('Sem header app-access-token. O site pode ter mudado.');return;}var h=await r.text(),m=h.match(/merchantSummary[\\\\"\\s:{]*id[\\\\"\\s:]*([a-f0-9-]{36})/);if(!m){alert('Nao achei merchantId no HTML. O site pode ter mudado.');return;}var mid=m[1],a={headers:{Authorization:'Bearer '+t}},cb='https://menudino-catalog.consumerapis.com/api/v1',mb='https://menudino-merchants.consumerapis.com/api/v1';var me=await(await fetch(mb+'/merchants/'+mid,a)).json();var cr=await(await fetch(cb+'/categories/'+mid+'?OnlyActive=false',a)).json();var cs=cr.items||[];var it={},tt=0;for(var i=0;i<cs.length;i++){var ir=await(await fetch(cb+'/items/'+mid+'/'+cs[i].id+'/summary?SellOnline=false',a)).json();it[cs[i].id]=ir.items||[];tt+=it[cs[i].id].length;}var p=JSON.stringify({version:1,merchant:me,categories:cs,itemsByCategoryId:it});var ok=function(){alert('OK! '+cs.length+' categorias e '+tt+' items copiados ('+p.length+' chars). Volte ao cardapio-admin e clique em Colar e sincronizar.');};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(p).then(ok,function(){var x=document.createElement('textarea');x.value=p;x.style.position='fixed';x.style.top='0';x.style.opacity='0';document.body.appendChild(x);x.focus();x.select();try{document.execCommand('copy');document.body.removeChild(x);ok();}catch(e){document.body.removeChild(x);prompt('Copie:',p);}});}else{prompt('Copie:',p);}}catch(e){alert('Erro: '+(e&&e.message||e));}})();`
+
+// ---------------------------------------------------------------------------
+// Bookmarklet de 1 clique (posta direto no Cloudflare Worker)
+//
+// Quando configurado (VITE_MENUDINO_SYNC_WORKER_URL + VITE_MENUDINO_SYNC_SECRET
+// definidos no build), renderiza um <a href="javascript:..."> que o dono
+// arrasta pra barra de favoritos do browser. Clicando nele estando na aba
+// do Menudino, o cardápio é sincronizado num clique só.
+//
+// Não depende do fluxo manual (que continua funcionando como fallback).
+// Só é mostrado pra marieta-bistro porque é o único cliente com Worker
+// provisionado no momento.
+// ---------------------------------------------------------------------------
+
+const WORKER_URL = import.meta.env.VITE_MENUDINO_SYNC_WORKER_URL || ''
+const SYNC_SECRET = import.meta.env.VITE_MENUDINO_SYNC_SECRET || ''
+const BOOKMARKLET_CONFIGURED = !!(WORKER_URL && SYNC_SECRET)
+
+// Código do bookmarklet (minificado, single-line). Padrão de regex igual
+// ao SNIPPET_CODE; diferença: em vez de copiar pro clipboard, POSTa no Worker.
+// Content-Type text/plain evita preflight CORS (simple request).
+function buildBookmarkletCode(workerUrl, secret) {
+  return `(async()=>{try{if(!location.hostname.includes('menudino.com')){alert('Abra o Menudino primeiro (esta em: '+location.hostname+')');return;}var r=await fetch('/',{cache:'no-store'});if(!r.ok){alert('fetch / falhou: HTTP '+r.status);return;}var t=r.headers.get('app-access-token');if(!t){alert('Sem app-access-token. Site pode ter mudado.');return;}var h=await r.text(),m=h.match(/merchantSummary[\\\\"\\s:{]*id[\\\\"\\s:]*([a-f0-9-]{36})/);if(!m){alert('merchantId nao encontrado no HTML. Site pode ter mudado.');return;}var mid=m[1],a={headers:{Authorization:'Bearer '+t}},cb='https://menudino-catalog.consumerapis.com/api/v1',mb='https://menudino-merchants.consumerapis.com/api/v1';var me=await(await fetch(mb+'/merchants/'+mid,a)).json();var cr=await(await fetch(cb+'/categories/'+mid+'?OnlyActive=false',a)).json();var cs=cr.items||[];var it={};for(var i=0;i<cs.length;i++){var ir=await(await fetch(cb+'/items/'+mid+'/'+cs[i].id+'/summary?SellOnline=false',a)).json();it[cs[i].id]=ir.items||[];}var res=await fetch('${workerUrl}',{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({merchant:me,categories:cs,itemsByCategoryId:it,secret:'${secret}'})});var data=await res.json();if(data.ok){var s=data.stats;alert('OK! '+s.categorias_novas+' categorias novas, '+s.adicionados+' items adicionados, '+s.atualizados+' atualizados, '+s.inativados+' inativados.');}else{alert('Erro do servidor: '+(data.error||'desconhecido'));}}catch(e){alert('Erro: '+(e&&e.message||e));}})();void 0;`
+}
+
+// Monta o HTML do <a> com href="javascript:..." URL-encoded. Usado via
+// dangerouslySetInnerHTML porque o React 19 bloqueia javascript: em href JSX.
+function buildBookmarkletAnchorHTML() {
+  if (!BOOKMARKLET_CONFIGURED) return null
+  const code = buildBookmarkletCode(WORKER_URL, SYNC_SECRET)
+  // encodeURIComponent encode ":", "/", "\"", "&", "<", ">", etc — garante
+  // que o href fique seguro em HTML double-quoted e que o browser decode
+  // corretamente antes de avaliar o JS.
+  const href = `javascript:${encodeURIComponent(code)}`
+  return `<a href="${href}" draggable="true" title="Arraste pra barra de favoritos. Depois, estando na aba do Menudino, clique pra sincronizar." style="display:inline-block;padding:10px 18px;background:linear-gradient(135deg,#059669,#047857);color:white;border-radius:8px;font-weight:700;text-decoration:none;cursor:move;box-shadow:0 2px 4px rgba(0,0,0,0.1);user-select:none">⬇️ Sincronizar Marieta</a>`
+}
+
+const BOOKMARKLET_ANCHOR_HTML = buildBookmarkletAnchorHTML()
 
 export default function SyncMenudinoModal({ isOpen, onClose, restaurantSlug, onSyncComplete }) {
   const [menudinoUrl, setMenudinoUrl] = useState('')
@@ -284,6 +322,38 @@ export default function SyncMenudinoModal({ isOpen, onClose, restaurantSlug, onS
           )}
 
           {/* Setup section — fica sempre visível (não depende de success) */}
+
+              {/* Bookmarklet de 1 clique — só pra marieta-bistro com env vars configurados */}
+              {BOOKMARKLET_ANCHOR_HTML && restaurantSlug === 'marieta-bistro' && (
+                <>
+                  <div className="mb-4 bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-300 rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xl">⚡</span>
+                      <div className="font-bold text-emerald-900">Sync de 1 clique (recomendado)</div>
+                    </div>
+                    <p className="text-xs text-slate-700 mb-3">
+                      Arraste o botão abaixo pra <b>barra de favoritos</b> do seu navegador
+                      (fazer isso só uma vez). Depois, estando na aba do Menudino, é só
+                      clicar nele — cardápio atualiza sozinho em ~10s, sem abrir Console
+                      nem este modal.
+                    </p>
+                    <div dangerouslySetInnerHTML={{ __html: BOOKMARKLET_ANCHOR_HTML }} />
+                    <p className="text-xs text-slate-500 mt-3">
+                      Como funciona: o botão roda um script na aba do Menudino que puxa
+                      seu cardápio e manda pro nosso servidor (Cloudflare Worker), que
+                      grava no Firestore. Um alert confirma o resultado.
+                    </p>
+                  </div>
+                  <div className="relative mb-4">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-200"></div>
+                    </div>
+                    <div className="relative flex justify-center text-xs">
+                      <span className="bg-white px-2 text-slate-400">ou use o fluxo manual (fallback)</span>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Input URL Menudino */}
               <div className="mb-4">

@@ -1,0 +1,289 @@
+/**
+ * Cloudflare Worker: marieta-sync
+ *
+ * Recebe payload do bookmarklet (rodando na aba do Menudino) e grava no Firestore
+ * usando service account. O Worker existe porque Firebase Auth barra CORS a partir
+ * de `marietabistro.menudino.com`, ent\u00e3o o browser n\u00e3o consegue escrever direto
+ * \u2014 delega pra c\u00e1, que usa OAuth server-side.
+ *
+ * Fluxo:
+ *   1. Valida Origin e SHARED_SECRET
+ *   2. Assina JWT com SERVICE_ACCOUNT_JSON (Web Crypto RS256)
+ *   3. Troca JWT por access_token no Google OAuth
+ *   4. L\u00ea cardapio + businessInfo atuais via Firestore REST
+ *   5. Converte payload e faz merge defensivo
+ *   6. Grava cardapio + businessInfo atualizados
+ *   7. Retorna stats
+ *
+ * Secrets (configurar via `wrangler secret put`):
+ *   SERVICE_ACCOUNT_JSON \u2014 conte\u00fado do JSON do service account
+ *   SHARED_SECRET        \u2014 token aleat\u00f3rio (32+ chars), mesmo que o bookmarklet envia
+ */
+
+import {
+  converterMenudino,
+  converterBusinessInfo,
+  mergeCardapio,
+  mergeBusinessInfo
+} from './menudino-sync-lib.js';
+
+const ALLOWED_ORIGIN = 'https://marietabistro.menudino.com';
+const PROJECT_ID = 'cardapio-admin-prod';
+const RESTAURANT_SLUG = 'marieta-bistro';
+
+export default {
+  async fetch(request, env) {
+    // CORS preflight
+    if (request.method === 'OPTIONS') {
+      return cors(new Response(null, { status: 204 }));
+    }
+
+    // S\u00f3 POST
+    if (request.method !== 'POST') {
+      return cors(new Response('Method Not Allowed', { status: 405 }));
+    }
+
+    // Origin check \u2014 bloqueia XSS de outras origens
+    const origin = request.headers.get('Origin');
+    if (origin !== ALLOWED_ORIGIN) {
+      return new Response('Forbidden: origin', { status: 403 });
+    }
+
+    try {
+      // Body pode vir como text/plain (pra evitar preflight no bookmarklet)
+      const raw = await request.text();
+      let body;
+      try {
+        body = JSON.parse(raw);
+      } catch (e) {
+        return cors(jsonResponse({ ok: false, error: 'body n\u00e3o \u00e9 JSON v\u00e1lido' }, 400));
+      }
+
+      // Shared secret
+      if (!body.secret || body.secret !== env.SHARED_SECRET) {
+        return cors(jsonResponse({ ok: false, error: 'secret inv\u00e1lido' }, 401));
+      }
+
+      // Sanity check do payload
+      if (!body.merchant || !Array.isArray(body.categories) || typeof body.itemsByCategoryId !== 'object') {
+        return cors(jsonResponse({ ok: false, error: 'payload incompleto' }, 400));
+      }
+
+      // 1. Access token Google
+      const accessToken = await getGoogleAccessToken(env.SERVICE_ACCOUNT_JSON);
+
+      // 2. L\u00ea estado atual do Firestore
+      const [cardapioAtual, businessInfoAtual] = await Promise.all([
+        firestoreGetContent('cardapio', accessToken),
+        firestoreGetContent('businessInfo', accessToken)
+      ]);
+
+      // 3. Converte + merge
+      const cardapioNovo = converterMenudino(body.categories, body.itemsByCategoryId);
+      const businessInfoNovo = converterBusinessInfo(body.merchant);
+      const merged = mergeCardapio(cardapioAtual, cardapioNovo);
+      const businessInfoMerged = mergeBusinessInfo(businessInfoAtual, businessInfoNovo);
+
+      // 4. Grava
+      const updatedAt = new Date().toISOString();
+      await Promise.all([
+        firestorePatchDoc('cardapio', { content: merged.cardapio, updatedAt }, accessToken),
+        firestorePatchDoc('businessInfo', { content: businessInfoMerged, updatedAt }, accessToken)
+      ]);
+
+      return cors(jsonResponse({ ok: true, stats: merged.stats, updatedAt }));
+    } catch (e) {
+      console.error('sync error:', e && e.stack || e);
+      return cors(jsonResponse({ ok: false, error: (e && e.message) || String(e) }, 500));
+    }
+  }
+};
+
+// ---------------------------------------------------------------------------
+// CORS + helpers
+// ---------------------------------------------------------------------------
+
+function cors(res) {
+  const headers = new Headers(res.headers);
+  headers.set('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type');
+  headers.set('Access-Control-Max-Age', '86400');
+  return new Response(res.body, { status: res.status, headers });
+}
+
+function jsonResponse(obj, status = 200) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Google OAuth via service account JWT (RS256 via Web Crypto)
+// ---------------------------------------------------------------------------
+
+async function getGoogleAccessToken(serviceAccountJson) {
+  const sa = JSON.parse(serviceAccountJson);
+  const now = Math.floor(Date.now() / 1000);
+
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const claim = {
+    iss: sa.client_email,
+    scope: 'https://www.googleapis.com/auth/datastore',
+    aud: 'https://oauth2.googleapis.com/token',
+    exp: now + 3600,
+    iat: now
+  };
+
+  const encodedHeader = base64urlEncode(JSON.stringify(header));
+  const encodedClaim = base64urlEncode(JSON.stringify(claim));
+  const signingInput = `${encodedHeader}.${encodedClaim}`;
+
+  const privateKey = await importPrivateKey(sa.private_key);
+  const signatureBuf = await crypto.subtle.sign(
+    { name: 'RSASSA-PKCS1-v1_5' },
+    privateKey,
+    new TextEncoder().encode(signingInput)
+  );
+  const signature = base64urlEncodeBuffer(signatureBuf);
+  const jwt = `${signingInput}.${signature}`;
+
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`OAuth token exchange falhou: HTTP ${res.status} ${txt}`);
+  }
+  const data = await res.json();
+  if (!data.access_token) throw new Error('OAuth sem access_token na resposta');
+  return data.access_token;
+}
+
+async function importPrivateKey(pem) {
+  // Remove header/footer e quebras de linha
+  const cleaned = pem
+    .replace('-----BEGIN PRIVATE KEY-----', '')
+    .replace('-----END PRIVATE KEY-----', '')
+    .replace(/\s+/g, '');
+  const binary = base64ToArrayBuffer(cleaned);
+  return crypto.subtle.importKey(
+    'pkcs8',
+    binary,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+}
+
+function base64urlEncode(str) {
+  return base64urlEncodeBuffer(new TextEncoder().encode(str));
+}
+
+function base64urlEncodeBuffer(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64ToArrayBuffer(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+// ---------------------------------------------------------------------------
+// Firestore REST (via access token)
+// ---------------------------------------------------------------------------
+
+const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+
+function docPath(docId) {
+  return `${FIRESTORE_BASE}/restaurants/${RESTAURANT_SLUG}/data/${docId}`;
+}
+
+/**
+ * GET de um documento, retornando apenas o `content` decodificado (ou null se 404).
+ */
+async function firestoreGetContent(docId, accessToken) {
+  const r = await fetch(docPath(docId), {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (r.status === 404) return null;
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(`Firestore GET ${docId}: HTTP ${r.status} ${txt}`);
+  }
+  const data = await r.json();
+  if (!data.fields) return null;
+  const fields = decodeFields(data.fields);
+  return fields.content || null;
+}
+
+/**
+ * PATCH (overwrite) completo do documento com { content, updatedAt }.
+ * `updateMask` omitido \u2192 substitui o documento inteiro.
+ */
+async function firestorePatchDoc(docId, payload, accessToken) {
+  const body = { fields: encodeFields(payload) };
+  const r = await fetch(docPath(docId), {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(`Firestore PATCH ${docId}: HTTP ${r.status} ${txt}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Firestore Value <\u2192> JS converters
+// https://cloud.google.com/firestore/docs/reference/rest/v1/Value
+// ---------------------------------------------------------------------------
+
+function encodeFields(obj) {
+  const out = {};
+  for (const k of Object.keys(obj)) out[k] = encodeValue(obj[k]);
+  return out;
+}
+
+function encodeValue(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number') {
+    if (Number.isInteger(v)) return { integerValue: String(v) };
+    return { doubleValue: v };
+  }
+  if (typeof v === 'string') return { stringValue: v };
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(encodeValue) } };
+  if (typeof v === 'object') return { mapValue: { fields: encodeFields(v) } };
+  throw new Error('Tipo n\u00e3o suportado em encodeValue: ' + typeof v);
+}
+
+function decodeFields(fields) {
+  const out = {};
+  for (const k of Object.keys(fields)) out[k] = decodeValue(fields[k]);
+  return out;
+}
+
+function decodeValue(val) {
+  if ('nullValue' in val) return null;
+  if ('booleanValue' in val) return val.booleanValue;
+  if ('integerValue' in val) return parseInt(val.integerValue, 10);
+  if ('doubleValue' in val) return val.doubleValue;
+  if ('stringValue' in val) return val.stringValue;
+  if ('timestampValue' in val) return val.timestampValue;
+  if ('arrayValue' in val) return (val.arrayValue.values || []).map(decodeValue);
+  if ('mapValue' in val) return decodeFields(val.mapValue.fields || {});
+  return null;
+}
