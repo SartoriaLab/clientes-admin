@@ -69,8 +69,7 @@ async function getValidToken() {
   return tokens.access_token
 }
 
-async function fetchSearchAnalytics(siteUrl, token, dimension) {
-  const { startDate, endDate } = last30Days()
+async function fetchSearchAnalytics(siteUrl, token, dimension, startDate, endDate) {
   const resp = await fetch(
     `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
     {
@@ -94,8 +93,7 @@ async function fetchSearchAnalytics(siteUrl, token, dimension) {
   return resp.json()
 }
 
-async function fetchSummary(siteUrl, token) {
-  const { startDate, endDate } = last30Days()
+async function fetchSummary(siteUrl, token, startDate, endDate) {
   const resp = await fetch(
     `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
     {
@@ -110,6 +108,20 @@ async function fetchSummary(siteUrl, token) {
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}))
     throw new Error(err.error?.message || `Erro ${resp.status}`)
+  }
+  return resp.json()
+}
+
+async function fetchGoatCounter(gcUrl, token, endpoint, params = {}) {
+  const base = gcUrl.replace(/\/$/, '')
+  const url = new URL(`${base}/api/v0/${endpoint}`)
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
+  const resp = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.error || `GoatCounter ${resp.status}`)
   }
   return resp.json()
 }
@@ -145,6 +157,16 @@ export default function RelatorioSEOPage() {
   const [error, setError] = useState('')
   const [report, setReport] = useState(null)
   const [needsAuth, setNeedsAuth] = useState(false)
+  const [dateRange, setDateRange] = useState(() => last30Days())
+
+  // GoatCounter state
+  const [gcReport, setGcReport] = useState(null)
+  const [gcGenerating, setGcGenerating] = useState(false)
+  const [gcConfigOpen, setGcConfigOpen] = useState(false)
+  const [gcUrlInput, setGcUrlInput] = useState('')
+  const [gcTokenInput, setGcTokenInput] = useState('')
+  const [gcSaving, setGcSaving] = useState(false)
+  const [gcError, setGcError] = useState('')
 
   useEffect(() => {
     loadData()
@@ -159,7 +181,12 @@ export default function RelatorioSEOPage() {
         getDoc(doc(db, 'settings', 'googleSearchConsole')),
       ])
       if (restSnap.exists()) setRestaurant({ id: restSnap.id, ...restSnap.data() })
-      if (contractSnap.exists()) setContract(contractSnap.data())
+      if (contractSnap.exists()) {
+        const c = contractSnap.data()
+        setContract(c)
+        setGcUrlInput(c.goatcounterUrl || '')
+        setGcTokenInput(c.goatcounterToken || '')
+      }
       if (!authSnap.exists() || !authSnap.data().refreshToken) setNeedsAuth(true)
     } catch (err) {
       setError('Erro ao carregar dados: ' + err.message)
@@ -228,57 +255,132 @@ export default function RelatorioSEOPage() {
     window.addEventListener('message', handleMessage)
   }
 
-  async function handleGenerate() {
+  async function handleGenerateAll() {
     setGenerating(true)
+    setGcGenerating(true)
     setError('')
+    setGcError('')
     setReport(null)
+    setGcReport(null)
 
-    try {
-      const siteUrl = contract?.siteUrl
-      if (!siteUrl) throw new Error('Site URL não configurado para este cliente')
+    const { startDate, endDate } = dateRange
 
-      const token = await getValidToken()
-      if (!token) {
-        setNeedsAuth(true)
-        throw new Error('Token expirado. Reconecte o Google Search Console.')
+    // GSC
+    const gscPromise = (async () => {
+      try {
+        const siteUrl = contract?.siteUrl
+        if (!siteUrl) throw new Error('Site URL não configurado para este cliente')
+
+        const token = await getValidToken()
+        if (!token) {
+          setNeedsAuth(true)
+          throw new Error('Token expirado. Reconecte o Google Search Console.')
+        }
+
+        const [summaryData, queriesData, pagesData] = await Promise.all([
+          fetchSummary(siteUrl, token, startDate, endDate),
+          fetchSearchAnalytics(siteUrl, token, 'query', startDate, endDate),
+          fetchSearchAnalytics(siteUrl, token, 'page', startDate, endDate),
+        ])
+
+        setReport({
+          period: { start: startDate, end: endDate },
+          summary: {
+            impressions: summaryData.rows?.[0]?.impressions || 0,
+            position: summaryData.rows?.[0]?.position || 0,
+          },
+          topQueries: (queriesData.rows || []).map(r => ({
+            query: r.keys[0],
+            impressions: r.impressions,
+          })),
+          topPages: (pagesData.rows || []).map(r => ({
+            page: r.keys[0],
+            impressions: r.impressions,
+          })),
+          generatedAt: new Date().toISOString(),
+        })
+      } catch (err) {
+        setError(err.message)
       }
+      setGenerating(false)
+    })()
 
-      const [summaryData, queriesData, pagesData] = await Promise.all([
-        fetchSummary(siteUrl, token),
-        fetchSearchAnalytics(siteUrl, token, 'query'),
-        fetchSearchAnalytics(siteUrl, token, 'page'),
-      ])
+    // GoatCounter
+    const gcPromise = (async () => {
+      try {
+        const gcUrl = contract?.goatcounterUrl
+        const gcToken = contract?.goatcounterToken
+        if (!gcUrl || !gcToken) return
 
-      const { startDate, endDate } = last30Days()
+        const params = { start: startDate, end: endDate }
+        const [totalData, hitsData, refsData] = await Promise.all([
+          fetchGoatCounter(gcUrl, gcToken, 'stats/total', params),
+          fetchGoatCounter(gcUrl, gcToken, 'stats/hits', { ...params, limit: 10 }),
+          fetchGoatCounter(gcUrl, gcToken, 'stats/toprefs', { ...params, limit: 5 }),
+        ])
 
-      setReport({
-        period: { start: startDate, end: endDate },
-        summary: {
-          clicks: summaryData.rows?.[0]?.clicks || 0,
-          impressions: summaryData.rows?.[0]?.impressions || 0,
-          ctr: summaryData.rows?.[0]?.ctr || 0,
-          position: summaryData.rows?.[0]?.position || 0,
-        },
-        topQueries: (queriesData.rows || []).map(r => ({
-          query: r.keys[0],
-          clicks: r.clicks,
-          impressions: r.impressions,
-        })),
-        topPages: (pagesData.rows || []).map(r => ({
-          page: r.keys[0],
-          clicks: r.clicks,
-          impressions: r.impressions,
-        })),
-        generatedAt: new Date().toISOString(),
-      })
-    } catch (err) {
-      setError(err.message)
+        const hits = (hitsData.hits || []).map(h => ({
+          path: h.path || h.name || '/',
+          title: h.title || '',
+          count: h.count || 0,
+          countUnique: h.count_unique || 0,
+        }))
+        const refs = (refsData.stats || []).map(r => ({
+          ref: r.name || '(direto)',
+          count: r.count || 0,
+          countUnique: r.count_unique || 0,
+        }))
+
+        setGcReport({
+          period: { start: startDate, end: endDate },
+          summary: {
+            pageviews: totalData.total || 0,
+            unique: totalData.total_unique || 0,
+            topPath: hits[0]?.path || '—',
+            topRef: refs[0]?.ref || 'Acesso direto',
+          },
+          topHits: hits,
+          topRefs: refs,
+          generatedAt: new Date().toISOString(),
+        })
+      } catch (err) {
+        setGcError(err.message)
+      }
+      setGcGenerating(false)
+    })()
+
+    await Promise.all([gscPromise, gcPromise])
+  }
+
+  async function handleSaveGoatCounter() {
+    setGcError('')
+    const url = gcUrlInput.trim().replace(/\/$/, '')
+    const token = gcTokenInput.trim()
+    if (!url || !token) {
+      setGcError('Preencha URL e token.')
+      return
     }
-    setGenerating(false)
+    if (!/^https?:\/\//.test(url)) {
+      setGcError('URL deve começar com http:// ou https://')
+      return
+    }
+    setGcSaving(true)
+    try {
+      await setDoc(
+        doc(db, 'contracts', slug),
+        { goatcounterUrl: url, goatcounterToken: token },
+        { merge: true }
+      )
+      setContract(prev => ({ ...(prev || {}), goatcounterUrl: url, goatcounterToken: token }))
+      setGcConfigOpen(false)
+    } catch (err) {
+      setGcError('Erro ao salvar: ' + err.message)
+    }
+    setGcSaving(false)
   }
 
   function handleExportPDF() {
-    if (!report) return
+    if (!report && !gcReport) return
     setExporting(true)
     try {
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
@@ -320,12 +422,17 @@ export default function RelatorioSEOPage() {
       pdf.setFont('helvetica', 'normal')
       pdf.setFontSize(11)
       setColor('#64748b')
-      pdf.text('Como seu site apareceu no Google', W / 2, y, { align: 'center' })
+      pdf.text('Relatório de Desempenho Digital', W / 2, y, { align: 'center' })
       y += 6
 
+      const periodLabel = report
+        ? `${formatDateBR(report.period.start)} a ${formatDateBR(report.period.end)}`
+        : gcReport
+          ? `${formatDateBR(gcReport.period.start)} a ${formatDateBR(gcReport.period.end)}`
+          : ''
       pdf.setFontSize(9)
       setColor('#94a3b8')
-      pdf.text(`Período: ${formatDateBR(report.period.start)} a ${formatDateBR(report.period.end)}`, W / 2, y, { align: 'center' })
+      pdf.text(`Período: ${periodLabel}`, W / 2, y, { align: 'center' })
       y += 10
 
       // Divider
@@ -333,57 +440,228 @@ export default function RelatorioSEOPage() {
       pdf.line(margin, y, W - margin, y)
       y += 8
 
-      // Intro text
-      pdf.setFontSize(8.5)
-      setColor('#475569')
-      const introLines = pdf.splitTextToSize(
-        'Este relatório mostra como as pessoas encontraram seu site pesquisando no Google. ' +
-        'Abaixo você verá quantas vezes seu site apareceu nos resultados, quantas pessoas clicaram e quais palavras usaram para te encontrar.',
-        contentW
-      )
-      pdf.text(introLines, margin, y)
-      y += introLines.length * 4 + 8
-
-      // KPI Cards — 2x2 grid
-      const cardW = (contentW - 6) / 2
-      const cardH = 28
-      const kpis = [
-        { label: 'CLIQUES', value: formatNumber(report.summary.clicks), desc: 'Quantas vezes alguém clicou no seu site', bg: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8' },
-        { label: 'IMPRESSÕES', value: formatNumber(report.summary.impressions), desc: 'Quantas vezes seu site apareceu no Google', bg: '#f0fdf4', border: '#bbf7d0', text: '#15803d' },
-        { label: 'TAXA DE CLIQUES (CTR)', value: formatPercent(report.summary.ctr), desc: 'Porcentagem de pessoas que clicou. Quanto maior, melhor!', bg: '#fffbeb', border: '#fde68a', text: '#b45309' },
-        { label: 'POSIÇÃO MÉDIA', value: formatPosition(report.summary.position), desc: 'Posição média no Google. Posição 1 = primeiro resultado', bg: '#faf5ff', border: '#d8b4fe', text: '#7e22ce' },
-      ]
-
-      kpis.forEach((kpi, i) => {
-        const col = i % 2
-        const row = Math.floor(i / 2)
-        const cx = margin + col * (cardW + 6)
-        const cy = y + row * (cardH + 4)
-
-        setFillColor(kpi.bg)
-        setDrawColor(kpi.border)
-        pdf.roundedRect(cx, cy, cardW, cardH, 2, 2, 'FD')
-
+      // ── Seção 1: GoatCounter ────────────────────────────────────────
+      if (gcReport) {
+        pdf.setFont('helvetica', 'bold')
+        pdf.setFontSize(11)
+        setColor('#1e293b')
+        pdf.text('📈 Visitas ao site', margin, y)
+        y += 4
         pdf.setFont('helvetica', 'normal')
-        pdf.setFontSize(7)
-        setColor(kpi.text)
-        pdf.text(kpi.label, cx + 4, cy + 6)
+        pdf.setFontSize(7.5)
+        setColor('#64748b')
+        const gcIntroLines = pdf.splitTextToSize(
+          'Dados do GoatCounter: quem realmente visitou seu site, de onde veio e quais páginas acessou.',
+          contentW
+        )
+        pdf.text(gcIntroLines, margin, y)
+        y += gcIntroLines.length * 4 + 6
+
+        // GC KPI Cards
+        const gcCardW = (contentW - 6) / 2
+        const gcCardH = 28
+        const gcKpis = [
+          { label: 'PAGEVIEWS', value: formatNumber(gcReport.summary.pageviews), desc: 'Total de páginas visualizadas', bg: '#f0fdf4', border: '#bbf7d0', text: '#15803d' },
+          { label: 'VISITANTES ÚNICOS', value: formatNumber(gcReport.summary.unique), desc: 'Pessoas distintas que visitaram o site', bg: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8' },
+        ]
+        gcKpis.forEach((kpi, i) => {
+          const cx = margin + i * (gcCardW + 6)
+          const cy = y
+          setFillColor(kpi.bg)
+          setDrawColor(kpi.border)
+          pdf.roundedRect(cx, cy, gcCardW, gcCardH, 2, 2, 'FD')
+          pdf.setFont('helvetica', 'normal')
+          pdf.setFontSize(7)
+          setColor(kpi.text)
+          pdf.text(kpi.label, cx + 4, cy + 6)
+          pdf.setFont('helvetica', 'bold')
+          pdf.setFontSize(16)
+          pdf.text(kpi.value, cx + 4, cy + 15)
+          pdf.setFont('helvetica', 'normal')
+          pdf.setFontSize(6.5)
+          setColor('#64748b')
+          const descLines = pdf.splitTextToSize(kpi.desc, gcCardW - 8)
+          pdf.text(descLines, cx + 4, cy + 21)
+        })
+        y += gcCardH + 10
+
+        // GC Top Pages
+        if (gcReport.topHits.length > 0) {
+          checkPage(40)
+          pdf.setFont('helvetica', 'bold')
+          pdf.setFontSize(10)
+          setColor('#1e293b')
+          pdf.text('Páginas mais visitadas', margin, y)
+          y += 4
+          pdf.setFont('helvetica', 'normal')
+          pdf.setFontSize(7.5)
+          setColor('#64748b')
+          pdf.text('Caminhos do site que receberam mais acessos diretos no período.', margin, y)
+          y += 6
+
+          setFillColor('#f8fafc')
+          setDrawColor('#e2e8f0')
+          pdf.roundedRect(margin, y, contentW, 7, 1, 1, 'FD')
+          pdf.setFont('helvetica', 'bold')
+          pdf.setFontSize(7)
+          setColor('#64748b')
+          pdf.text('#', margin + 3, y + 5)
+          pdf.text('Página', margin + 12, y + 5)
+          pdf.text('Visitas', W - margin - 25, y + 5, { align: 'right' })
+          pdf.text('Únicos', W - margin - 3, y + 5, { align: 'right' })
+          y += 8
+
+          gcReport.topHits.forEach((h, i) => {
+            checkPage(7)
+            if (i % 2 === 1) {
+              setFillColor('#f8fafc')
+              pdf.rect(margin, y - 1, contentW, 7, 'F')
+            }
+            const displayPath = h.path === '/' ? 'Página inicial' : (h.path.length > 45 ? h.path.slice(0, 45) + '…' : h.path)
+            pdf.setFont('helvetica', 'normal')
+            pdf.setFontSize(8)
+            setColor('#94a3b8')
+            pdf.text(`${i + 1}`, margin + 3, y + 4)
+            setColor('#334155')
+            pdf.setFont('helvetica', 'bold')
+            pdf.text(displayPath, margin + 12, y + 4)
+            pdf.setFont('helvetica', 'normal')
+            setColor('#15803d')
+            pdf.text(formatNumber(h.count), W - margin - 25, y + 4, { align: 'right' })
+            setColor('#64748b')
+            pdf.text(formatNumber(h.countUnique), W - margin - 3, y + 4, { align: 'right' })
+            y += 7
+          })
+          y += 8
+        }
+
+        // GC Top Referrers
+        if (gcReport.topRefs.length > 0) {
+          checkPage(40)
+          pdf.setFont('helvetica', 'bold')
+          pdf.setFontSize(10)
+          setColor('#1e293b')
+          pdf.text('De onde vieram as visitas', margin, y)
+          y += 4
+          pdf.setFont('helvetica', 'normal')
+          pdf.setFontSize(7.5)
+          setColor('#64748b')
+          pdf.text('Sites e fontes que mais trouxeram visitantes.', margin, y)
+          y += 6
+
+          setFillColor('#f8fafc')
+          setDrawColor('#e2e8f0')
+          pdf.roundedRect(margin, y, contentW, 7, 1, 1, 'FD')
+          pdf.setFont('helvetica', 'bold')
+          pdf.setFontSize(7)
+          setColor('#64748b')
+          pdf.text('#', margin + 3, y + 5)
+          pdf.text('Origem', margin + 12, y + 5)
+          pdf.text('Visitas', W - margin - 3, y + 5, { align: 'right' })
+          y += 8
+
+          gcReport.topRefs.forEach((r, i) => {
+            checkPage(7)
+            if (i % 2 === 1) {
+              setFillColor('#f8fafc')
+              pdf.rect(margin, y - 1, contentW, 7, 'F')
+            }
+            const displayRef = r.ref.length > 55 ? r.ref.slice(0, 55) + '…' : r.ref
+            pdf.setFont('helvetica', 'normal')
+            pdf.setFontSize(8)
+            setColor('#94a3b8')
+            pdf.text(`${i + 1}`, margin + 3, y + 4)
+            setColor('#334155')
+            pdf.setFont('helvetica', 'bold')
+            pdf.text(displayRef, margin + 12, y + 4)
+            pdf.setFont('helvetica', 'normal')
+            setColor('#7e22ce')
+            pdf.text(formatNumber(r.count), W - margin - 3, y + 4, { align: 'right' })
+            y += 7
+          })
+          y += 8
+        }
+
+        // GC summary tip
+        checkPage(20)
+        setFillColor('#f0fdf4')
+        setDrawColor('#bbf7d0')
+        const gcTipText = gcReport.summary.pageviews > 0
+          ? `No período, ${formatNumber(gcReport.summary.unique)} visitantes únicos geraram ${formatNumber(gcReport.summary.pageviews)} visualizações de página. A origem principal foi: ${gcReport.summary.topRef}.`
+          : 'Ainda não há dados de visitas para este período. Aguarde alguns dias após a publicação do site.'
+        const gcTipLines = pdf.splitTextToSize(gcTipText, contentW - 10)
+        const gcTipH = gcTipLines.length * 4 + 12
+        pdf.roundedRect(margin, y, contentW, gcTipH, 2, 2, 'FD')
+        pdf.setFont('helvetica', 'bold')
+        pdf.setFontSize(8)
+        setColor('#15803d')
+        pdf.text('💡 O que esses números significam?', margin + 5, y + 6)
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(7.5)
+        setColor('#14532d')
+        pdf.text(gcTipLines, margin + 5, y + 12)
+        y += gcTipH + 12
+      }
+
+      // ── Seção 2: Google Search Console ──────────────────────────────
+      if (report) {
+        checkPage(30)
+        setDrawColor('#e2e8f0')
+        pdf.line(margin, y, W - margin, y)
+        y += 10
 
         pdf.setFont('helvetica', 'bold')
-        pdf.setFontSize(16)
-        pdf.text(kpi.value, cx + 4, cy + 15)
-
+        pdf.setFontSize(11)
+        setColor('#1e293b')
+        pdf.text('🔍 Como seu site apareceu no Google', margin, y)
+        y += 4
         pdf.setFont('helvetica', 'normal')
-        pdf.setFontSize(6.5)
+        pdf.setFontSize(7.5)
         setColor('#64748b')
-        const descLines = pdf.splitTextToSize(kpi.desc, cardW - 8)
-        pdf.text(descLines, cx + 4, cy + 21)
-      })
+        const gscIntroLines = pdf.splitTextToSize(
+          'Dados do Google Search Console: quantas vezes seu site apareceu nas pesquisas e em qual posição.',
+          contentW
+        )
+        pdf.text(gscIntroLines, margin, y)
+        y += gscIntroLines.length * 4 + 6
 
-      y += (cardH + 4) * 2 + 10
+        // KPI Cards — 2 cards lado a lado (sem Cliques e CTR)
+        const cardW = (contentW - 6) / 2
+        const cardH = 28
+        const kpis = [
+          { label: 'IMPRESSÕES', value: formatNumber(report.summary.impressions), desc: 'Quantas vezes seu site apareceu no Google', bg: '#f0fdf4', border: '#bbf7d0', text: '#15803d' },
+          { label: 'POSIÇÃO MÉDIA', value: formatPosition(report.summary.position), desc: 'Posição média nos resultados. Posição 1 = primeiro resultado', bg: '#faf5ff', border: '#d8b4fe', text: '#7e22ce' },
+        ]
+
+        kpis.forEach((kpi, i) => {
+          const cx = margin + i * (cardW + 6)
+          const cy = y
+
+          setFillColor(kpi.bg)
+          setDrawColor(kpi.border)
+          pdf.roundedRect(cx, cy, cardW, cardH, 2, 2, 'FD')
+
+          pdf.setFont('helvetica', 'normal')
+          pdf.setFontSize(7)
+          setColor(kpi.text)
+          pdf.text(kpi.label, cx + 4, cy + 6)
+
+          pdf.setFont('helvetica', 'bold')
+          pdf.setFontSize(16)
+          pdf.text(kpi.value, cx + 4, cy + 15)
+
+          pdf.setFont('helvetica', 'normal')
+          pdf.setFontSize(6.5)
+          setColor('#64748b')
+          const descLines = pdf.splitTextToSize(kpi.desc, cardW - 8)
+          pdf.text(descLines, cx + 4, cy + 21)
+        })
+
+        y += cardH + 10
+      }
 
       // Top Queries table
-      if (report.topQueries.length > 0) {
+      if (report?.topQueries?.length > 0) {
         checkPage(40)
         pdf.setFont('helvetica', 'bold')
         pdf.setFontSize(10)
@@ -396,7 +674,6 @@ export default function RelatorioSEOPage() {
         pdf.text('Termos que as pessoas digitaram no Google e que fizeram seu site aparecer.', margin, y)
         y += 6
 
-        // Table header
         setFillColor('#f8fafc')
         setDrawColor('#e2e8f0')
         pdf.roundedRect(margin, y, contentW, 7, 1, 1, 'FD')
@@ -405,8 +682,7 @@ export default function RelatorioSEOPage() {
         setColor('#64748b')
         pdf.text('#', margin + 3, y + 5)
         pdf.text('O que pesquisaram', margin + 12, y + 5)
-        pdf.text('Clicaram', W - margin - 30, y + 5, { align: 'right' })
-        pdf.text('Viram', W - margin - 3, y + 5, { align: 'right' })
+        pdf.text('Apareceu', W - margin - 3, y + 5, { align: 'right' })
         y += 8
 
         report.topQueries.forEach((q, i) => {
@@ -421,11 +697,9 @@ export default function RelatorioSEOPage() {
           pdf.text(`${i + 1}`, margin + 3, y + 4)
           setColor('#334155')
           pdf.setFont('helvetica', 'bold')
-          const queryText = q.query.length > 40 ? q.query.slice(0, 40) + '…' : q.query
+          const queryText = q.query.length > 50 ? q.query.slice(0, 50) + '…' : q.query
           pdf.text(queryText, margin + 12, y + 4)
           pdf.setFont('helvetica', 'normal')
-          setColor('#1d4ed8')
-          pdf.text(formatNumber(q.clicks), W - margin - 30, y + 4, { align: 'right' })
           setColor('#64748b')
           pdf.text(formatNumber(q.impressions), W - margin - 3, y + 4, { align: 'right' })
           y += 7
@@ -433,18 +707,18 @@ export default function RelatorioSEOPage() {
         y += 8
       }
 
-      // Top Pages table
-      if (report.topPages.length > 0) {
+      // Top Pages table (GSC)
+      if (report?.topPages?.length > 0) {
         checkPage(40)
         pdf.setFont('helvetica', 'bold')
         pdf.setFontSize(10)
         setColor('#1e293b')
-        pdf.text('Páginas mais visitadas do seu site', margin, y)
+        pdf.text('Páginas que mais apareceram no Google', margin, y)
         y += 4
         pdf.setFont('helvetica', 'normal')
         pdf.setFontSize(7.5)
         setColor('#64748b')
-        pdf.text('Páginas que mais receberam visitas vindas do Google.', margin, y)
+        pdf.text('Páginas com mais aparições nos resultados de pesquisa.', margin, y)
         y += 6
 
         setFillColor('#f8fafc')
@@ -455,8 +729,7 @@ export default function RelatorioSEOPage() {
         setColor('#64748b')
         pdf.text('#', margin + 3, y + 5)
         pdf.text('Página', margin + 12, y + 5)
-        pdf.text('Clicaram', W - margin - 30, y + 5, { align: 'right' })
-        pdf.text('Viram', W - margin - 3, y + 5, { align: 'right' })
+        pdf.text('Apareceu', W - margin - 3, y + 5, { align: 'right' })
         y += 8
 
         report.topPages.forEach((p, i) => {
@@ -468,7 +741,7 @@ export default function RelatorioSEOPage() {
           let displayUrl = p.page
           try { displayUrl = new URL(p.page).pathname } catch {}
           if (displayUrl === '/') displayUrl = 'Página inicial'
-          if (displayUrl.length > 45) displayUrl = displayUrl.slice(0, 45) + '…'
+          if (displayUrl.length > 50) displayUrl = displayUrl.slice(0, 50) + '…'
 
           pdf.setFont('helvetica', 'normal')
           pdf.setFontSize(8)
@@ -478,8 +751,6 @@ export default function RelatorioSEOPage() {
           pdf.setFont('helvetica', 'bold')
           pdf.text(displayUrl, margin + 12, y + 4)
           pdf.setFont('helvetica', 'normal')
-          setColor('#1d4ed8')
-          pdf.text(formatNumber(p.clicks), W - margin - 30, y + 4, { align: 'right' })
           setColor('#64748b')
           pdf.text(formatNumber(p.impressions), W - margin - 3, y + 4, { align: 'right' })
           y += 7
@@ -487,33 +758,37 @@ export default function RelatorioSEOPage() {
         y += 8
       }
 
-      // Summary tip
-      checkPage(20)
-      setFillColor('#fffbeb')
-      setDrawColor('#fde68a')
-      const tipText = report.summary.clicks > 0
-        ? `Neste mês, ${formatNumber(report.summary.impressions)} pessoas viram seu site no Google e ${formatNumber(report.summary.clicks)} delas clicaram para visitar. Seu site aparece em média na posição ${formatPosition(report.summary.position)} dos resultados de busca.`
-        : 'Seu site ainda está começando a aparecer no Google. É normal levar algumas semanas para os resultados crescerem. Continue mantendo o site atualizado!'
-      const tipLines = pdf.splitTextToSize(tipText, contentW - 10)
-      const tipH = tipLines.length * 4 + 12
-      pdf.roundedRect(margin, y, contentW, tipH, 2, 2, 'FD')
-      pdf.setFont('helvetica', 'bold')
-      pdf.setFontSize(8)
-      setColor('#92400e')
-      pdf.text('O que esses números significam?', margin + 5, y + 6)
-      pdf.setFont('helvetica', 'normal')
-      pdf.setFontSize(7.5)
-      setColor('#78350f')
-      pdf.text(tipLines, margin + 5, y + 12)
-      y += tipH + 8
+      // GSC summary tip
+      if (report) {
+        checkPage(20)
+        setFillColor('#fffbeb')
+        setDrawColor('#fde68a')
+        const tipText = report.summary.impressions > 0
+          ? `No período selecionado, seu site apareceu ${formatNumber(report.summary.impressions)} vezes nas pesquisas do Google. Posição média: ${formatPosition(report.summary.position)} (quanto menor, melhor).`
+          : 'Seu site ainda está começando a aparecer no Google. É normal levar algumas semanas para os resultados crescerem.'
+        const tipLines = pdf.splitTextToSize(tipText, contentW - 10)
+        const tipH = tipLines.length * 4 + 12
+        pdf.roundedRect(margin, y, contentW, tipH, 2, 2, 'FD')
+        pdf.setFont('helvetica', 'bold')
+        pdf.setFontSize(8)
+        setColor('#92400e')
+        pdf.text('💡 O que significa posição média?', margin + 5, y + 6)
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(7.5)
+        setColor('#78350f')
+        pdf.text(tipLines, margin + 5, y + 12)
+        y += tipH + 12
+      }
 
       // Footer
+      checkPage(15)
       setDrawColor('#f1f5f9')
       pdf.line(margin, y, W - margin, y)
       y += 5
       pdf.setFontSize(7)
       setColor('#94a3b8')
-      const footerText = `Relatório gerado em ${new Date(report.generatedAt).toLocaleDateString('pt-BR')} às ${new Date(report.generatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} — Dados do Google Search Console`
+      const sources = [report && 'Google Search Console', gcReport && 'GoatCounter'].filter(Boolean).join(' + ')
+      const footerText = `Relatório gerado em ${new Date().toLocaleDateString('pt-BR')} — Dados: ${sources}`
       pdf.text(footerText, W / 2, y, { align: 'center' })
 
       pdf.save(`relatorio-seo-${slug}-${new Date().toISOString().slice(0, 7)}.pdf`)
@@ -542,33 +817,69 @@ export default function RelatorioSEOPage() {
   return (
     <div className="max-w-4xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">Relatório SEO</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{restaurant.name} — {contract?.siteUrl || 'Site URL não configurado'}</p>
+      <div className="mb-8">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800">Relatório SEO</h1>
+            <p className="text-sm text-slate-500 mt-0.5">{restaurant.name} — {contract?.siteUrl || 'Site URL não configurado'}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {(report || gcReport) && (
+              <button
+                onClick={handleExportPDF}
+                disabled={exporting}
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition disabled:opacity-50"
+              >
+                {exporting ? 'Exportando…' : '📄 Exportar PDF'}
+              </button>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {needsAuth && (
+
+        {/* Date range + generate button */}
+        <div className="mt-4 flex flex-wrap items-end gap-3 bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Data inicial</label>
+            <input
+              type="date"
+              value={dateRange.startDate}
+              max={dateRange.endDate}
+              onChange={e => setDateRange(prev => ({ ...prev, startDate: e.target.value }))}
+              className="text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Data final</label>
+            <input
+              type="date"
+              value={dateRange.endDate}
+              min={dateRange.startDate}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={e => setDateRange(prev => ({ ...prev, endDate: e.target.value }))}
+              className="text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
+            />
+          </div>
+          <div className="flex items-end gap-2 ml-auto">
+            {needsAuth && (
+              <button
+                onClick={handleConnectGoogle}
+                className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-sm px-4 py-2 rounded-xl transition"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                </svg>
+                Conectar Search Console
+              </button>
+            )}
             <button
-              onClick={handleConnectGoogle}
-              className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-sm px-4 py-2 rounded-xl transition"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-              </svg>
-              Conectar Search Console
-            </button>
-          )}
-          {!needsAuth && (
-            <button
-              onClick={handleGenerate}
-              disabled={generating || !contract?.siteUrl}
+              onClick={handleGenerateAll}
+              disabled={generating || gcGenerating || (!contract?.siteUrl && !contract?.goatcounterUrl)}
               className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition disabled:opacity-50"
             >
-              {generating ? (
+              {generating || gcGenerating ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   Gerando…
@@ -577,16 +888,7 @@ export default function RelatorioSEOPage() {
                 <>📊 Gerar Relatório</>
               )}
             </button>
-          )}
-          {report && (
-            <button
-              onClick={handleExportPDF}
-              disabled={exporting}
-              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition disabled:opacity-50"
-            >
-              {exporting ? 'Exportando…' : '📄 Exportar PDF'}
-            </button>
-          )}
+          </div>
         </div>
       </div>
 
@@ -596,26 +898,202 @@ export default function RelatorioSEOPage() {
         </div>
       )}
 
-      {!report && !generating && !error && (
+      {!report && !gcReport && !generating && !gcGenerating && !error && !gcError && (
         <div className="bg-white rounded-2xl border border-slate-200 py-24 text-center">
           <p className="text-4xl mb-4">📊</p>
           <p className="text-slate-500 text-sm">
             {needsAuth
               ? 'Conecte sua conta Google para acessar o Search Console.'
-              : 'Clique em "Gerar Relatório" para buscar os dados do Search Console.'
+              : 'Selecione o período e clique em "Gerar Relatório".'
             }
           </p>
         </div>
       )}
 
-      {/* Report content */}
+      {/* === Seção GoatCounter === */}
+      <div className="mb-10">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-xl font-bold text-slate-800">📈 Acessos no site (GoatCounter)</h2>
+            <p className="text-sm text-slate-500 mt-0.5">
+              {contract?.goatcounterUrl
+                ? <>Conectado a <span className="font-mono text-xs">{contract.goatcounterUrl}</span></>
+                : 'Tracking cookieless de visitas — configure abaixo para começar.'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setGcConfigOpen(v => !v)}
+              className="text-sm text-slate-600 hover:text-slate-800 font-medium px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 transition"
+            >
+              ⚙️ {contract?.goatcounterUrl ? 'Editar' : 'Configurar'}
+            </button>
+          </div>
+        </div>
+
+        {gcConfigOpen && (
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Configuração do GoatCounter</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">URL do site GoatCounter</label>
+                <input
+                  type="url"
+                  value={gcUrlInput}
+                  onChange={e => setGcUrlInput(e.target.value)}
+                  placeholder="https://marietabistro.goatcounter.com"
+                  className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  API Token (gere em <span className="font-mono">{'{url}'}/user/api</span> com permissão "Read statistics")
+                </label>
+                <input
+                  type="password"
+                  value={gcTokenInput}
+                  onChange={e => setGcTokenInput(e.target.value)}
+                  placeholder="••••••••••••••••"
+                  className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none font-mono"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  onClick={() => { setGcConfigOpen(false); setGcError('') }}
+                  className="text-sm text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-100"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleSaveGoatCounter}
+                  disabled={gcSaving}
+                  className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2 rounded-lg disabled:opacity-50"
+                >
+                  {gcSaving ? 'Salvando…' : 'Salvar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {gcError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-4 text-sm">
+            {gcError}
+          </div>
+        )}
+
+        {!gcReport && !gcGenerating && !gcError && (
+          <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center">
+            <p className="text-4xl mb-3">📈</p>
+            <p className="text-slate-500 text-sm">
+              {contract?.goatcounterUrl && contract?.goatcounterToken
+                ? 'Clique em "Gerar relatório de acessos" para buscar pageviews e visitantes.'
+                : 'Configure a URL e o token do GoatCounter para ver os dados de acesso.'}
+            </p>
+          </div>
+        )}
+
+        {gcReport && (
+          <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '1rem', padding: '2rem', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+            <div style={{ textAlign: 'center', marginBottom: '2rem', paddingBottom: '1.5rem', borderBottom: '1px solid #f1f5f9' }}>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>{restaurant.name}</h2>
+              <p style={{ fontSize: '1rem', color: '#64748b', marginTop: '0.5rem' }}>Quem visitou seu site</p>
+              <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '0.25rem' }}>
+                Período: {formatDateBR(gcReport.period.start)} a {formatDateBR(gcReport.period.end)}
+              </p>
+            </div>
+
+            <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.75rem', padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
+              <p style={{ fontSize: '0.8rem', color: '#15803d', margin: 0, lineHeight: 1.6 }}>
+                Estes números mostram quantas pessoas realmente visitaram seu site (não apenas viram no Google).
+                O GoatCounter respeita a privacidade — não usa cookies nem rastreia identificação pessoal.
+              </p>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
+              <KpiCard label="Pageviews" value={formatNumber(gcReport.summary.pageviews)} icon="👁️" color="green" description="Total de páginas visualizadas no período" />
+              <KpiCard label="Visitantes únicos" value={formatNumber(gcReport.summary.unique)} icon="👤" color="blue" description="Pessoas distintas que visitaram seu site" />
+              <KpiCard label="Página mais vista" value={gcReport.summary.topPath === '/' ? 'Início' : gcReport.summary.topPath} icon="📄" color="amber" description="A página que mais recebeu visitas" />
+              <KpiCard label="Principal origem" value={gcReport.summary.topRef} icon="🔗" color="purple" description="De onde a maior parte das visitas chegou" />
+            </div>
+
+            {gcReport.topHits.length > 0 && (
+              <div style={{ marginBottom: '2rem' }}>
+                <h3 style={{ fontSize: '0.875rem', fontWeight: 700, color: '#1e293b', marginBottom: '0.25rem' }}>Páginas mais visitadas</h3>
+                <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.75rem' }}>Caminhos do site que receberam mais acessos no período.</p>
+                <table style={{ width: '100%', fontSize: '0.875rem', borderCollapse: 'collapse', border: '1px solid #e2e8f0' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#f8fafc' }}>
+                      <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>#</th>
+                      <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Página</th>
+                      <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Pageviews</th>
+                      <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Visitantes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gcReport.topHits.map((h, i) => (
+                      <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '0.625rem 1rem', color: '#94a3b8', fontWeight: 500 }}>{i + 1}</td>
+                        <td style={{ padding: '0.625rem 1rem', color: '#334155', fontWeight: 500, maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h.path}>
+                          {h.path === '/' ? 'Página inicial' : h.path}
+                        </td>
+                        <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#15803d', fontWeight: 600 }}>{formatNumber(h.count)}</td>
+                        <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#64748b' }}>{formatNumber(h.countUnique)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {gcReport.topRefs.length > 0 && (
+              <div style={{ marginBottom: '2rem' }}>
+                <h3 style={{ fontSize: '0.875rem', fontWeight: 700, color: '#1e293b', marginBottom: '0.25rem' }}>De onde vieram</h3>
+                <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.75rem' }}>Sites e fontes que mais trouxeram visitas.</p>
+                <table style={{ width: '100%', fontSize: '0.875rem', borderCollapse: 'collapse', border: '1px solid #e2e8f0' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#f8fafc' }}>
+                      <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>#</th>
+                      <th style={{ textAlign: 'left', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Origem</th>
+                      <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Visitas</th>
+                      <th style={{ textAlign: 'right', padding: '0.625rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>Únicos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gcReport.topRefs.map((r, i) => (
+                      <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '0.625rem 1rem', color: '#94a3b8', fontWeight: 500 }}>{i + 1}</td>
+                        <td style={{ padding: '0.625rem 1rem', color: '#334155', fontWeight: 500, maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.ref}>
+                          {r.ref}
+                        </td>
+                        <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#7e22ce', fontWeight: 600 }}>{formatNumber(r.count)}</td>
+                        <td style={{ padding: '0.625rem 1rem', textAlign: 'right', color: '#64748b' }}>{formatNumber(r.countUnique)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ paddingTop: '1.5rem', borderTop: '1px solid #f1f5f9', textAlign: 'center' }}>
+              <p style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                Relatório gerado em {new Date(gcReport.generatedAt).toLocaleDateString('pt-BR')} às{' '}
+                {new Date(gcReport.generatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                {' '}— Dados do GoatCounter
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Report content — Google Search Console */}
       {report && (
         <div ref={reportRef} style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '1rem', padding: '2rem', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
           {/* Report Header */}
           <div style={{ textAlign: 'center', marginBottom: '2rem', paddingBottom: '1.5rem', borderBottom: '1px solid #f1f5f9' }}>
             <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>{restaurant.name}</h2>
             <p style={{ fontSize: '1rem', color: '#64748b', marginTop: '0.5rem' }}>
-              Como seu site apareceu no Google
+              Desempenho no Google — Search Console
             </p>
             <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '0.25rem' }}>
               Período: {formatDateBR(report.period.start)} a {formatDateBR(report.period.end)}
@@ -625,33 +1103,18 @@ export default function RelatorioSEOPage() {
           {/* Intro explanation */}
           <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '0.75rem', padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
             <p style={{ fontSize: '0.8rem', color: '#475569', margin: 0, lineHeight: 1.6 }}>
-              Este relatório mostra como as pessoas encontraram seu site pesquisando no Google.
-              Abaixo você verá quantas vezes seu site apareceu nos resultados, quantas pessoas clicaram e quais palavras usaram para te encontrar.
+              Dados do Google Search Console: quantas vezes seu site apareceu nas pesquisas e em qual posição média nos resultados.
             </p>
           </div>
 
-          {/* KPI Cards */}
+          {/* KPI Cards — só Impressões e Posição */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
             <KpiCard
-              label="Cliques"
-              value={formatNumber(report.summary.clicks)}
-              icon="🖱️"
-              color="blue"
-              description="Quantas vezes alguém clicou no seu site nos resultados do Google"
-            />
-            <KpiCard
-              label="Impressões"
+              label="Impressões no Google"
               value={formatNumber(report.summary.impressions)}
               icon="👁️"
               color="green"
               description="Quantas vezes seu site apareceu nos resultados de busca do Google"
-            />
-            <KpiCard
-              label="Taxa de Cliques (CTR)"
-              value={formatPercent(report.summary.ctr)}
-              icon="📈"
-              color="amber"
-              description="De todas as vezes que seu site apareceu, esse % das pessoas clicou. Quanto maior, melhor!"
             />
             <KpiCard
               label="Posição Média"
@@ -735,10 +1198,10 @@ export default function RelatorioSEOPage() {
 
           {/* Summary tip */}
           <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '0.75rem', padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
-            <p style={{ fontSize: '0.8rem', fontWeight: 600, color: '#92400e', margin: '0 0 0.25rem 0' }}>💡 O que esses números significam?</p>
+            <p style={{ fontSize: '0.8rem', fontWeight: 600, color: '#92400e', margin: '0 0 0.25rem 0' }}>💡 O que significa posição média?</p>
             <p style={{ fontSize: '0.75rem', color: '#78350f', margin: 0, lineHeight: 1.6 }}>
-              {report.summary.clicks > 0
-                ? `Neste mês, ${formatNumber(report.summary.impressions)} pessoas viram seu site no Google e ${formatNumber(report.summary.clicks)} delas clicaram para visitar. Seu site aparece em média na posição ${formatPosition(report.summary.position)} dos resultados de busca.`
+              {report.summary.impressions > 0
+                ? `No período selecionado, seu site apareceu ${formatNumber(report.summary.impressions)} vezes nas pesquisas do Google. A posição média ${formatPosition(report.summary.position)} significa que, em média, seu site estava na ${formatPosition(report.summary.position)}ª posição dos resultados — quanto menor, melhor.`
                 : 'Seu site ainda está começando a aparecer no Google. É normal levar algumas semanas para os resultados crescerem. Continue mantendo o site atualizado!'
               }
             </p>
@@ -754,6 +1217,7 @@ export default function RelatorioSEOPage() {
           </div>
         </div>
       )}
+
     </div>
   )
 }
