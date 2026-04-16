@@ -353,11 +353,14 @@ async function uploadInstagramPost(post, index, accessToken) {
   const contentType = imgRes.headers.get('Content-Type') || 'image/jpeg';
   const bytes = await imgRes.arrayBuffer();
 
-  // 2. Sobe pro Firebase Storage com download token pr\u00e9-setado
+  // 2. Sobe pro Firebase Storage via GCS JSON upload API.
+  // (firebasestorage.googleapis.com/v0 n\u00e3o aceita uploadType=media; a API
+  // oficial do Google Cloud Storage aceita, e o token custom metadata
+  // `firebaseStorageDownloadTokens` funciona igual — gera URL publica.)
   const token = crypto.randomUUID();
   const objectPath = `instagram/${RESTAURANT_SLUG}/post_${index + 1}.jpg`;
   const encodedPath = encodeURIComponent(objectPath);
-  const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o?uploadType=media&name=${encodedPath}`;
+  const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${STORAGE_BUCKET}/o?uploadType=media&name=${encodedPath}`;
 
   const upRes = await fetch(uploadUrl, {
     method: 'POST',
@@ -373,6 +376,8 @@ async function uploadInstagramPost(post, index, accessToken) {
     throw new Error(`upload Storage post ${index + 1}: HTTP ${upRes.status} ${txt}`);
   }
 
+  // URL p\u00fablica via Firebase Storage download endpoint (l\u00ea o metadata
+  // firebaseStorageDownloadTokens que setamos no upload).
   const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodedPath}?alt=media&token=${token}`;
   return { publicUrl };
 }
