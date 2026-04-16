@@ -164,6 +164,8 @@ export default function RelatorioSEOPage() {
   const [report, setReport] = useState(null)
   const [needsAuth, setNeedsAuth] = useState(false)
   const [dateRange, setDateRange] = useState(() => last30Days())
+  const dateRangeRef = useRef(dateRange)
+  useEffect(() => { dateRangeRef.current = dateRange }, [dateRange])
 
   // GoatCounter state
   const [gcReport, setGcReport] = useState(null)
@@ -269,7 +271,7 @@ export default function RelatorioSEOPage() {
     setReport(null)
     setGcReport(null)
 
-    const { startDate, endDate } = dateRange
+    const { startDate, endDate } = dateRangeRef.current
 
     // GSC
     const gscPromise = (async () => {
