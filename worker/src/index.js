@@ -27,25 +27,31 @@ import {
   mergeBusinessInfo
 } from './menudino-sync-lib.js';
 
-const ALLOWED_ORIGIN = 'https://marietabistro.menudino.com';
+const ALLOWED_ORIGINS = [
+  'https://marietabistro.menudino.com',
+  'https://www.instagram.com'
+];
 const PROJECT_ID = 'cardapio-admin-prod';
+const STORAGE_BUCKET = 'cardapio-admin-prod.firebasestorage.app';
 const RESTAURANT_SLUG = 'marieta-bistro';
 
 export default {
   async fetch(request, env) {
+    const origin = request.headers.get('Origin');
+    const allowed = ALLOWED_ORIGINS.includes(origin);
+
     // CORS preflight
     if (request.method === 'OPTIONS') {
-      return cors(new Response(null, { status: 204 }));
+      return cors(new Response(null, { status: 204 }), origin);
     }
 
     // S\u00f3 POST
     if (request.method !== 'POST') {
-      return cors(new Response('Method Not Allowed', { status: 405 }));
+      return cors(new Response('Method Not Allowed', { status: 405 }), origin);
     }
 
     // Origin check \u2014 bloqueia XSS de outras origens
-    const origin = request.headers.get('Origin');
-    if (origin !== ALLOWED_ORIGIN) {
+    if (!allowed) {
       return new Response('Forbidden: origin', { status: 403 });
     }
 
@@ -56,17 +62,22 @@ export default {
       try {
         body = JSON.parse(raw);
       } catch (e) {
-        return cors(jsonResponse({ ok: false, error: 'body n\u00e3o \u00e9 JSON v\u00e1lido' }, 400));
+        return cors(jsonResponse({ ok: false, error: 'body n\u00e3o \u00e9 JSON v\u00e1lido' }, 400), origin);
       }
 
       // Shared secret
       if (!body.secret || body.secret !== env.SHARED_SECRET) {
-        return cors(jsonResponse({ ok: false, error: 'secret inv\u00e1lido' }, 401));
+        return cors(jsonResponse({ ok: false, error: 'secret inv\u00e1lido' }, 401), origin);
+      }
+
+      // Rota Instagram (bookmarklet rodando em instagram.com)
+      if (body.kind === 'instagram') {
+        return cors(await syncInstagram(body, env), origin);
       }
 
       // Sanity check do payload
       if (!body.merchant || !Array.isArray(body.categories) || typeof body.itemsByCategoryId !== 'object') {
-        return cors(jsonResponse({ ok: false, error: 'payload incompleto' }, 400));
+        return cors(jsonResponse({ ok: false, error: 'payload incompleto' }, 400), origin);
       }
 
       // 1. Access token Google
@@ -91,10 +102,10 @@ export default {
         firestorePatchDoc('businessInfo', { content: businessInfoMerged, updatedAt }, accessToken)
       ]);
 
-      return cors(jsonResponse({ ok: true, stats: merged.stats, updatedAt }));
+      return cors(jsonResponse({ ok: true, stats: merged.stats, updatedAt }), origin);
     } catch (e) {
       console.error('sync error:', e && e.stack || e);
-      return cors(jsonResponse({ ok: false, error: (e && e.message) || String(e) }, 500));
+      return cors(jsonResponse({ ok: false, error: (e && e.message) || String(e) }, 500), origin);
     }
   }
 };
@@ -103,9 +114,11 @@ export default {
 // CORS + helpers
 // ---------------------------------------------------------------------------
 
-function cors(res) {
+function cors(res, origin) {
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   const headers = new Headers(res.headers);
-  headers.set('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  headers.set('Access-Control-Allow-Origin', allowed);
+  headers.set('Vary', 'Origin');
   headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
   headers.set('Access-Control-Allow-Headers', 'Content-Type');
   headers.set('Access-Control-Max-Age', '86400');
@@ -123,14 +136,18 @@ function jsonResponse(obj, status = 200) {
 // Google OAuth via service account JWT (RS256 via Web Crypto)
 // ---------------------------------------------------------------------------
 
-async function getGoogleAccessToken(serviceAccountJson) {
+async function getGoogleAccessToken(serviceAccountJson, scopes) {
   const sa = JSON.parse(serviceAccountJson);
   const now = Math.floor(Date.now() / 1000);
+
+  const scopeList = Array.isArray(scopes) && scopes.length
+    ? scopes.join(' ')
+    : 'https://www.googleapis.com/auth/datastore';
 
   const header = { alg: 'RS256', typ: 'JWT' };
   const claim = {
     iss: sa.client_email,
-    scope: 'https://www.googleapis.com/auth/datastore',
+    scope: scopeList,
     aud: 'https://oauth2.googleapis.com/token',
     exp: now + 3600,
     iat: now
@@ -286,4 +303,76 @@ function decodeValue(val) {
   if ('arrayValue' in val) return (val.arrayValue.values || []).map(decodeValue);
   if ('mapValue' in val) return decodeFields(val.mapValue.fields || {});
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Instagram sync: bookmarklet manda array de posts, Worker baixa as imagens,
+// sobe pro Firebase Storage e grava no Firestore.
+// ---------------------------------------------------------------------------
+
+async function syncInstagram(body, env) {
+  if (!Array.isArray(body.posts) || !body.posts.length) {
+    return jsonResponse({ ok: false, error: 'posts vazios' }, 400);
+  }
+
+  const posts = body.posts.slice(0, 9);
+
+  const accessToken = await getGoogleAccessToken(env.SERVICE_ACCOUNT_JSON, [
+    'https://www.googleapis.com/auth/datastore',
+    'https://www.googleapis.com/auth/devstorage.read_write'
+  ]);
+
+  const uploads = await Promise.all(posts.map((post, i) => uploadInstagramPost(post, i, accessToken)));
+
+  const content = uploads.map((u, i) => ({
+    image: u.publicUrl,
+    postUrl: posts[i].postUrl || 'https://www.instagram.com/marieta_bistro/',
+    alt: posts[i].alt || 'Post do @marieta_bistro'
+  }));
+
+  const updatedAt = new Date().toISOString();
+  await firestorePatchDoc('instagram', { content, updatedAt }, accessToken);
+
+  return jsonResponse({ ok: true, stats: { count: content.length }, updatedAt });
+}
+
+async function uploadInstagramPost(post, index, accessToken) {
+  if (!post || !post.imageUrl) throw new Error(`post ${index + 1} sem imageUrl`);
+
+  // 1. Baixa a imagem do CDN do Instagram (UA + Referer evitam 403)
+  const imgRes = await fetch(post.imageUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Referer': 'https://www.instagram.com/',
+      'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+    }
+  });
+  if (!imgRes.ok) {
+    throw new Error(`download imagem post ${index + 1}: HTTP ${imgRes.status}`);
+  }
+  const contentType = imgRes.headers.get('Content-Type') || 'image/jpeg';
+  const bytes = await imgRes.arrayBuffer();
+
+  // 2. Sobe pro Firebase Storage com download token pr\u00e9-setado
+  const token = crypto.randomUUID();
+  const objectPath = `instagram/${RESTAURANT_SLUG}/post_${index + 1}.jpg`;
+  const encodedPath = encodeURIComponent(objectPath);
+  const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o?uploadType=media&name=${encodedPath}`;
+
+  const upRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': contentType,
+      'x-goog-meta-firebaseStorageDownloadTokens': token
+    },
+    body: bytes
+  });
+  if (!upRes.ok) {
+    const txt = await upRes.text();
+    throw new Error(`upload Storage post ${index + 1}: HTTP ${upRes.status} ${txt}`);
+  }
+
+  const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encodedPath}?alt=media&token=${token}`;
+  return { publicUrl };
 }
