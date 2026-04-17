@@ -203,7 +203,11 @@ Para exibir: leia a chave do dia atual (`new Date().getDay()` → 0=domingo, 6=s
 
 ---
 
-## 6. IDs de elementos no site do Marieta
+## 6. IDs de elementos no site cliente
+
+> **Observação:** cada site cliente tem sua própria tabela de IDs de DOM mapeados por `aplicarBusinessInfo`. A tabela abaixo é do **Marieta**. Para outros clientes, consulte a função correspondente no repositório do site (ex.: Pizza Kid → `C:/dev/prototipos/pizza kid/scripts/main.js:aplicarBusinessInfo`).
+
+### 6.1 Marieta Bistrô — IDs
 
 A função `aplicarBusinessInfo(info)` atualiza os seguintes elementos do DOM:
 
@@ -372,3 +376,86 @@ document.getElementById('btn-whatsapp').href = waUrl;
 - [ ] Implementar fallback com dados locais
 - [ ] Não bloquear renderização enquanto aguarda o Firestore
 - [ ] Garantir que qualquer link de WhatsApp/telefone/mapa tenha `id` e seja coberto por `aplicarBusinessInfo`
+
+---
+
+## 12. Clientes integrados
+
+| Slug                        | Nome                     | URL produção                                 | Integrado em | Particularidades                                                                 |
+|-----------------------------|--------------------------|----------------------------------------------|--------------|----------------------------------------------------------------------------------|
+| `marieta-bistro`            | Marieta Bistrô           | (menudino + site próprio)                    | 2026-04-03   | Inclui doc `instagram` com grid de posts renderizado via `renderInstagramGrid()` |
+| `pizza-kid`                 | Pizza Kid Taquaritinga   | https://www.pizzakidtaquaritinga.com.br      | 2026-04-17   | Cardápio tem campo `divisao` por aba (pizzas meio-a-meio); cache localStorage SWR |
+| `imperium-moda-social`      | Imperium Moda Social     | —                                            | 2026-04-14   | Não é restaurante; usa coleção `products` em vez de `cardapio`                    |
+| `casa-de-carnes-mais-sabor` | Casa de Carnes M. Sabor  | (menudino)                                   | 2026-04-14   | Sem site próprio; redirect para menudino                                          |
+
+Ao integrar um novo cliente, adicione uma linha nesta tabela com o que for não-trivial para futuros mantenedores.
+
+---
+
+## 13. Campos opcionais por cliente
+
+Além do schema base (seção 5), os clientes podem estender os documentos conforme necessário. Padrões observados:
+
+### 13.1 `cardapio` — campo `divisao` (Pizza Kid)
+Abas de pizzaria podem declarar em quantas fatias a pizza é dividida, para permitir combinação meio-a-meio:
+```js
+{ id: "pizza-bigtrem", label: "Pizza Bigtrem", ativo: true, divisao: 8, categorias: [...] }
+```
+Default implícito: `8`. Se o site cliente não usa meio-a-meio, simplesmente ignore o campo.
+
+### 13.2 `cardapio` — tags livres
+`item.tags` é um array de strings. As tags oficiais (seção 5.1) têm efeito visual/ordenação no admin. Tags não-oficiais são preservadas e podem ser usadas pelo site para filtros próprios (ex.: `"picante-leve"`, `"lancamento-2026"`).
+
+### 13.3 `businessInfo` — `hours.completo` como fonte única
+Recomenda-se que o site cliente derive o badge "aberto/fechado" a partir de `hours.completo`, parseando strings como `"Seg 17h-23h | Ter-Sab 17h30-23h30 | Dom 17h30-23h30"`. Implementação de referência em `C:/dev/prototipos/pizza kid/scripts/main.js` (função `parseBusinessHours` + `isOpenNow` + `refreshOpenStatus`).
+
+---
+
+## 14. Cache localStorage no site cliente (recomendado)
+
+Padrão **stale-while-revalidate** adotado no Pizza Kid (`C:/dev/prototipos/pizza kid/data/firestore.js`):
+
+1. Ao carregar, ler o cache em `localStorage` e renderizar imediatamente (mesmo que esteja velho até o TTL).
+2. Em paralelo, fazer o fetch do Firestore.
+3. Quando responder, gravar no cache e chamar a função de render novamente (re-render é idempotente porque todos os setters só atualizam o DOM se `info` existe).
+
+```js
+var TTL_HOUR = 60 * 60 * 1000;
+var CACHE_KEYS = {
+  cardapio: 'pk_menu_cache_v1',
+  businessInfo: 'pk_business_cache_v1',
+  promocoes: 'pk_promos_cache_v1'
+};
+function cacheGet(key, ttl) {
+  try {
+    var raw = localStorage.getItem(key);
+    if (!raw) return null;
+    var obj = JSON.parse(raw);
+    if (!obj || (Date.now() - obj.t) > ttl) return null;
+    return obj.d;
+  } catch(e) { return null; }
+}
+function cacheSet(key, data) {
+  try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), d: data })); } catch(e) {}
+}
+```
+
+**Benefícios:** tempo-para-primeira-renderização ~0ms mesmo em 3G, economia de leituras no Firestore.
+
+**Invalidação manual:** peça ao cliente rodar `localStorage.clear()` (ou bump do `_v1` → `_v2` no código) quando fizer alteração urgente no admin e quiser ver refletido antes do TTL.
+
+---
+
+## 15. Seed inicial via script (alternativa ao admin UI)
+
+Para popular os documentos de um novo cliente sem preencher campo a campo no admin, use `firebase-admin` + `serviceAccountProd.json`. Referência: `C:/dev/prototipos/pizza kid/scripts/seed-firestore.js` — roda num contexto `vm` sobre os fallbacks locais (`data/site.js`, `data/menu.js`) e grava em `restaurants/{slug}/data/{businessInfo,cardapio,promocoes}` com `updatedAt` em ISO string.
+
+Uso:
+```bash
+cd C:/dev/prototipos/pizza-kid
+node scripts/seed-firestore.js
+```
+
+Importante:
+- Nunca commitar `serviceAccountProd.json` (já está no `.gitignore` do admin).
+- Depois do seed, a edição passa a ser feita no painel admin — evitar rerodar o seed sem necessidade (sobrescreve o que o cliente editou).
