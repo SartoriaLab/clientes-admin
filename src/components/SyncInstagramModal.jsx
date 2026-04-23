@@ -16,7 +16,7 @@ const BOOKMARKLET_CONFIGURED = !!SYNC_SECRET
 // Mapping slug → { relayUrl, handle, instagramUrl }. Adicione novos clientes aqui.
 const RESTAURANT_CONFIG = {
   'marieta-bistro':   { relayUrl: 'https://marietabistro.com.br/sync-instagram.html',   handle: 'marieta_bistro',    instagramUrl: 'https://www.instagram.com/marieta_bistro/' },
-  'academia-olimpus': { relayUrl: 'https://olimpustaquaritinga.com.br/sync-instagram.html', handle: 'academiaolimpustaq', instagramUrl: 'https://www.instagram.com/academiaolimpustaq/' }
+  'academia-olimpus': { relayUrl: 'https://academiaolimpus.com.br/sync-instagram.html', handle: 'academiaolimpustaq', instagramUrl: 'https://www.instagram.com/academiaolimpustaq/' }
 }
 
 function resolveConfig(restaurantSlug, instagramUrl) {

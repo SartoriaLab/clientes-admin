@@ -36,8 +36,8 @@ const STORAGE_BUCKET = 'cardapio-admin-prod.firebasestorage.app';
 const TENANTS = {
   'https://marietabistro.menudino.com': { slug: 'marieta-bistro', instagramUrl: 'https://www.instagram.com/marieta_bistro/', handle: 'marieta_bistro' },
   'https://marietabistro.com.br':       { slug: 'marieta-bistro', instagramUrl: 'https://www.instagram.com/marieta_bistro/', handle: 'marieta_bistro' },
-  'https://olimpustaquaritinga.com.br': { slug: 'academia-olimpus', instagramUrl: 'https://www.instagram.com/academiaolimpustaq/', handle: 'academiaolimpustaq' },
-  'https://www.olimpustaquaritinga.com.br': { slug: 'academia-olimpus', instagramUrl: 'https://www.instagram.com/academiaolimpustaq/', handle: 'academiaolimpustaq' }
+  'https://academiaolimpus.com.br': { slug: 'academia-olimpus', instagramUrl: 'https://www.instagram.com/academiaolimpustaq/', handle: 'academiaolimpustaq' },
+  'https://www.academiaolimpus.com.br': { slug: 'academia-olimpus', instagramUrl: 'https://www.instagram.com/academiaolimpustaq/', handle: 'academiaolimpustaq' }
 };
 const ALLOWED_ORIGINS = Object.keys(TENANTS);
 
