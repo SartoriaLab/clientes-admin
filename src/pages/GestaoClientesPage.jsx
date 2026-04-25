@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { collection, getDocs, doc, setDoc, getDoc } from 'firebase/firestore'
 import { useNavigate } from 'react-router-dom'
 import { db } from '../firebase'
+import { getClientType } from '../lib/clientTypes'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -693,7 +694,7 @@ export default function GestaoClientesPage() {
                     )}
 
                     <a
-                      href={`/restaurante/${r.slug}/${r.type === 'garagem' ? 'veiculos' : r.type === 'roupas' ? 'roupas' : r.type === 'outros' ? 'info' : 'cardapio'}`}
+                      href={getClientType(r.type).publicEntry({ slug: r.slug })}
                       target="_blank"
                       rel="noopener noreferrer"
                       title="Abrir painel do cliente"

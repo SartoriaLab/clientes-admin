@@ -1,12 +1,26 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
-import { db } from '../firebase'
+import { db, auth } from '../firebase'
 import { jsPDF } from 'jspdf'
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
-const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET || ''
+const OAUTH_WORKER_URL = import.meta.env.VITE_OAUTH_WORKER_URL || import.meta.env.VITE_MENUDINO_SYNC_WORKER_URL || ''
 const SCOPES = 'https://www.googleapis.com/auth/webmasters.readonly'
+
+async function callWorkerOAuth(path, body) {
+  if (!OAUTH_WORKER_URL) throw new Error('VITE_OAUTH_WORKER_URL não configurado')
+  const idToken = await auth.currentUser?.getIdToken()
+  if (!idToken) throw new Error('não autenticado')
+  const r = await fetch(OAUTH_WORKER_URL.replace(/\/$/, '') + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(body)
+  })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok || !data.ok) throw new Error(data.error || `HTTP ${r.status}`)
+  return data.tokens
+}
 
 function formatNumber(n) {
   return new Intl.NumberFormat('pt-BR').format(n)
@@ -45,20 +59,14 @@ async function getValidToken() {
     return data.accessToken
   }
 
-  // Refresh the token
+  // Refresh via Worker (mantém client_secret server-side)
   if (!data.refreshToken) return null
-  const resp = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      client_secret: GOOGLE_CLIENT_SECRET,
-      refresh_token: data.refreshToken,
-      grant_type: 'refresh_token',
-    }),
-  })
-  if (!resp.ok) return null
-  const tokens = await resp.json()
+  let tokens
+  try {
+    tokens = await callWorkerOAuth('/oauth/google/refresh', { refresh_token: data.refreshToken })
+  } catch {
+    return null
+  }
 
   await setDoc(doc(db, 'settings', 'googleSearchConsole'), {
     ...data,
@@ -231,20 +239,11 @@ export default function RelatorioSEOPage() {
       window.removeEventListener('message', handleMessage)
 
       try {
-        // Exchange code for tokens
-        const resp = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            code: event.data.code,
-            client_id: GOOGLE_CLIENT_ID,
-            client_secret: GOOGLE_CLIENT_SECRET,
-            redirect_uri: redirectUri,
-            grant_type: 'authorization_code',
-          }),
+        // Exchange code for tokens via Worker (server-side client_secret)
+        const tokens = await callWorkerOAuth('/oauth/google/exchange', {
+          code: event.data.code,
+          redirect_uri: redirectUri,
         })
-        if (!resp.ok) throw new Error('Erro ao trocar código por tokens')
-        const tokens = await resp.json()
 
         await setDoc(doc(db, 'settings', 'googleSearchConsole'), {
           accessToken: tokens.access_token,

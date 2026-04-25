@@ -32,8 +32,10 @@ const PROJECT_ID = 'cardapio-admin-prod';
 // gs://cardapio-admin-prod.firebasestorage.app (naming novo, pos-out-2024).
 const STORAGE_BUCKET = 'cardapio-admin-prod.firebasestorage.app';
 
-// Multi-tenant: Origin → { slug, instagramUrl, handle }. Adicione novos clientes aqui.
-const TENANTS = {
+// Multi-tenant: Origin → { slug, instagramUrl, handle }.
+// Fallback hardcoded — fonte primária é Firestore /tenantConfig/{slug}.
+// Worker tenta Firestore primeiro, cai pro hardcoded se não achar.
+const TENANTS_FALLBACK = {
   'https://marietabistro.menudino.com': { slug: 'marieta-bistro', instagramUrl: 'https://www.instagram.com/marieta_bistro/', handle: 'marieta_bistro' },
   'https://marietabistro.com.br':       { slug: 'marieta-bistro', instagramUrl: 'https://www.instagram.com/marieta_bistro/', handle: 'marieta_bistro' },
   'https://academiaolimpus.com.br': { slug: 'academia-olimpus', instagramUrl: 'https://www.instagram.com/academiaolimpustaq/', handle: 'academiaolimpustaq' },
@@ -43,11 +45,71 @@ const TENANTS = {
   'https://casadecarnesmaissabor.com.br':     { slug: 'casa-de-carnes-mais-sabor', instagramUrl: 'https://www.instagram.com/casadecarnes.maissabor/', handle: 'casadecarnes.maissabor' },
   'https://www.casadecarnesmaissabor.com.br': { slug: 'casa-de-carnes-mais-sabor', instagramUrl: 'https://www.instagram.com/casadecarnes.maissabor/', handle: 'casadecarnes.maissabor' }
 };
-const ALLOWED_ORIGINS = Object.keys(TENANTS);
+
+// Cache em memória do Worker (TTL 5min) pra evitar GET Firestore a cada request
+let TENANTS_CACHE = null;
+let TENANTS_CACHE_AT = 0;
+const TENANTS_TTL_MS = 5 * 60 * 1000;
+
+async function loadTenants(env) {
+  if (TENANTS_CACHE && Date.now() - TENANTS_CACHE_AT < TENANTS_TTL_MS) {
+    return TENANTS_CACHE;
+  }
+  try {
+    const accessToken = await getGoogleAccessToken(env.SERVICE_ACCOUNT_JSON);
+    const r = await fetch(`${FIRESTORE_BASE}/tenantConfig`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (r.ok) {
+      const list = await r.json();
+      const map = {};
+      (list.documents || []).forEach(d => {
+        const fields = decodeFields(d.fields || {});
+        const origins = fields.origins || [];
+        origins.forEach(o => { map[o] = { slug: fields.slug, instagramUrl: fields.instagramUrl, handle: fields.handle }; });
+      });
+      // Merge com fallback (hardcoded ganha de Firestore não, ao contrário)
+      TENANTS_CACHE = { ...TENANTS_FALLBACK, ...map };
+    } else {
+      TENANTS_CACHE = TENANTS_FALLBACK;
+    }
+  } catch (e) {
+    console.error('loadTenants falhou, usando fallback:', e.message);
+    TENANTS_CACHE = TENANTS_FALLBACK;
+  }
+  TENANTS_CACHE_AT = Date.now();
+  return TENANTS_CACHE;
+}
+
+// Compat: código abaixo ainda referencia TENANTS — alias dinâmico
+const TENANTS = new Proxy({}, {
+  get(_, k) { return (TENANTS_CACHE || TENANTS_FALLBACK)[k]; },
+  ownKeys() { return Object.keys(TENANTS_CACHE || TENANTS_FALLBACK); },
+  has(_, k) { return k in (TENANTS_CACHE || TENANTS_FALLBACK); },
+  getOwnPropertyDescriptor(_, k) {
+    const v = (TENANTS_CACHE || TENANTS_FALLBACK)[k];
+    return v ? { enumerable: true, configurable: true, value: v } : undefined;
+  }
+});
+const ALLOWED_ORIGINS = new Proxy([], {
+  get(_, k) {
+    const arr = Object.keys(TENANTS_CACHE || TENANTS_FALLBACK);
+    return typeof arr[k] === 'function' ? arr[k].bind(arr) : arr[k];
+  }
+});
 
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
     const origin = request.headers.get('Origin');
+
+    // Rota OAuth (painel admin) — separa do fluxo bookmarklet
+    if (url.pathname.startsWith('/oauth/')) {
+      return handleOAuthRoute(request, env, origin, url.pathname);
+    }
+
+    // Garante TENANTS atualizados (cache 5min)
+    await loadTenants(env);
     const allowed = ALLOWED_ORIGINS.includes(origin);
 
     // CORS preflight
@@ -425,4 +487,133 @@ function buildMultipartBody(objectPath, contentType, downloadToken, bytes) {
   out.set(bytes, prefix.length);
   out.set(suffix, prefix.length + bytes.length);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// OAuth Google (server-side) — admin painel troca code/refresh sem expor
+// GOOGLE_CLIENT_SECRET no bundle do browser. Auth: Firebase ID token + Origin
+// allowlist via env ADMIN_ORIGINS (CSV).
+//
+// Secrets necessários no Worker:
+//   GOOGLE_CLIENT_ID
+//   GOOGLE_CLIENT_SECRET
+//   FIREBASE_API_KEY        (Web API key, para validar ID token)
+//   ADMIN_ORIGINS           (csv: https://admin.exemplo.com,https://outro.app)
+// ---------------------------------------------------------------------------
+
+async function handleOAuthRoute(request, env, origin, pathname) {
+  const adminOrigins = (env.ADMIN_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const adminAllowed = adminOrigins.includes(origin);
+
+  if (request.method === 'OPTIONS') {
+    return adminCors(new Response(null, { status: 204 }), origin, adminAllowed);
+  }
+  if (!adminAllowed) {
+    return new Response('Forbidden: origin', { status: 403 });
+  }
+  if (request.method !== 'POST') {
+    return adminCors(new Response('Method Not Allowed', { status: 405 }), origin, true);
+  }
+
+  // Valida Firebase ID token
+  const authHeader = request.headers.get('Authorization') || '';
+  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!idToken) {
+    return adminCors(jsonResponse({ ok: false, error: 'missing id token' }, 401), origin, true);
+  }
+  const adminUid = await verifyFirebaseAdmin(idToken, env);
+  if (!adminUid) {
+    return adminCors(jsonResponse({ ok: false, error: 'invalid id token or not admin' }, 401), origin, true);
+  }
+
+  let body;
+  try { body = await request.json(); }
+  catch { return adminCors(jsonResponse({ ok: false, error: 'json inválido' }, 400), origin, true); }
+
+  try {
+    if (pathname === '/oauth/google/exchange') {
+      const tokens = await googleExchange(body, env);
+      return adminCors(jsonResponse({ ok: true, tokens }), origin, true);
+    }
+    if (pathname === '/oauth/google/refresh') {
+      const tokens = await googleRefresh(body, env);
+      return adminCors(jsonResponse({ ok: true, tokens }), origin, true);
+    }
+    return adminCors(jsonResponse({ ok: false, error: 'rota desconhecida' }, 404), origin, true);
+  } catch (e) {
+    console.error('oauth error:', e && e.stack || e);
+    return adminCors(jsonResponse({ ok: false, error: e.message || String(e) }, 500), origin, true);
+  }
+}
+
+function adminCors(res, origin, allowed) {
+  const headers = new Headers(res.headers);
+  if (allowed && origin) {
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Vary', 'Origin');
+    headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    headers.set('Access-Control-Max-Age', '86400');
+  }
+  return new Response(res.body, { status: res.status, headers });
+}
+
+async function verifyFirebaseAdmin(idToken, env) {
+  if (!env.FIREBASE_API_KEY) throw new Error('FIREBASE_API_KEY não configurado');
+  const r = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${env.FIREBASE_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken })
+    }
+  );
+  if (!r.ok) return null;
+  const data = await r.json();
+  const u = data.users && data.users[0];
+  if (!u || !u.localId) return null;
+
+  // Confirma role=admin no Firestore
+  const accessToken = await getGoogleAccessToken(env.SERVICE_ACCOUNT_JSON);
+  const userDoc = await fetch(
+    `${FIRESTORE_BASE}/users/${u.localId}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!userDoc.ok) return null;
+  const docJson = await userDoc.json();
+  const role = docJson.fields?.role?.stringValue;
+  return role === 'admin' ? u.localId : null;
+}
+
+async function googleExchange({ code, redirect_uri }, env) {
+  if (!code || !redirect_uri) throw new Error('code e redirect_uri obrigatórios');
+  const r = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      redirect_uri,
+      grant_type: 'authorization_code'
+    })
+  });
+  if (!r.ok) throw new Error('exchange falhou: ' + (await r.text()));
+  return r.json();
+}
+
+async function googleRefresh({ refresh_token }, env) {
+  if (!refresh_token) throw new Error('refresh_token obrigatório');
+  const r = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      refresh_token,
+      grant_type: 'refresh_token'
+    })
+  });
+  if (!r.ok) throw new Error('refresh falhou: ' + (await r.text()));
+  return r.json();
 }
