@@ -3,37 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { db } from '../firebase'
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore'
-
-const TYPE_CONFIG = {
-  restaurante: {
-    emoji: '🍽️',
-    label: 'Restaurante',
-    badge: 'bg-amber-100 text-amber-800',
-    sections: (slug) => [
-      { label: 'Cardápio',    to: `/restaurante/${slug}/cardapio`,  cls: 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-100' },
-      { label: 'Promoções',   to: `/restaurante/${slug}/promocoes`, cls: 'bg-violet-50 hover:bg-violet-100 text-violet-800 border-violet-100' },
-      { label: 'Informações', to: `/restaurante/${slug}/info`,      cls: 'bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-100' },
-    ],
-  },
-  garagem: {
-    emoji: '🚗',
-    label: 'Garagem',
-    badge: 'bg-blue-100 text-blue-800',
-    sections: (slug) => [
-      { label: 'Veículos',    to: `/restaurante/${slug}/veiculos`, cls: 'bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-100' },
-      { label: 'Informações', to: `/restaurante/${slug}/info`,     cls: 'bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-100' },
-    ],
-  },
-  roupas: {
-    emoji: '👔',
-    label: 'Loja',
-    badge: 'bg-rose-100 text-rose-800',
-    sections: (slug) => [
-      { label: 'Catálogo',    to: `/restaurante/${slug}/roupas`, cls: 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-100' },
-      { label: 'Informações', to: `/restaurante/${slug}/info`,   cls: 'bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-100' },
-    ],
-  },
-}
+import { getClientType, colorClasses } from '../lib/clientTypes'
 
 export default function Dashboard() {
   const { userData, isAdmin } = useAuth()
@@ -105,21 +75,21 @@ export default function Dashboard() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {restaurants.map(r => {
-            const config = TYPE_CONFIG[r.type] || TYPE_CONFIG.restaurante
+            const typeDef = getClientType(r.type)
+            const cls = colorClasses(typeDef.color)
             const slug = r.slug || r.id
-            const sections = config.sections(slug)
+            const sections = typeDef.panelLinks({ slug })
 
             return (
               <div
                 key={r.id}
                 className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow"
               >
-                {/* Card top */}
                 <div className="px-5 pt-5 pb-4">
                   <div className="flex items-start justify-between gap-2 mb-1">
                     <h2 className="text-base font-bold text-slate-900 leading-snug">{r.name}</h2>
-                    <span className={`shrink-0 text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${config.badge}`}>
-                      {config.emoji} {config.label}
+                    <span className={`shrink-0 text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${cls.badge}`}>
+                      {typeDef.emoji} {typeDef.label}
                     </span>
                   </div>
                   {isAdmin && (
@@ -127,20 +97,21 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                {/* Divider */}
                 <div className="h-px bg-slate-100 mx-5" />
 
-                {/* Actions */}
                 <div className="px-5 py-4 grid gap-2" style={{ gridTemplateColumns: `repeat(${sections.length}, 1fr)` }}>
-                  {sections.map(s => (
-                    <Link
-                      key={s.to}
-                      to={s.to}
-                      className={`text-center py-2.5 rounded-xl text-[13px] font-semibold border transition ${s.cls}`}
-                    >
-                      {s.label}
-                    </Link>
-                  ))}
+                  {sections.map(s => {
+                    const scls = colorClasses(s.color)
+                    return (
+                      <Link
+                        key={s.to}
+                        to={s.to}
+                        className={`text-center py-2.5 rounded-xl text-[13px] font-semibold transition ${scls.pill}`}
+                      >
+                        {s.label}
+                      </Link>
+                    )
+                  })}
                 </div>
               </div>
             )
