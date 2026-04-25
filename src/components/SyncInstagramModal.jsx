@@ -15,8 +15,10 @@ const BOOKMARKLET_CONFIGURED = !!SYNC_SECRET
 
 // Mapping slug → { relayUrl, handle, instagramUrl }. Adicione novos clientes aqui.
 const RESTAURANT_CONFIG = {
-  'marieta-bistro':   { relayUrl: 'https://marietabistro.com.br/sync-instagram.html',   handle: 'marieta_bistro',    instagramUrl: 'https://www.instagram.com/marieta_bistro/' },
-  'academia-olimpus': { relayUrl: 'https://academiaolimpus.com.br/sync-instagram.html', handle: 'academiaolimpustaq', instagramUrl: 'https://www.instagram.com/academiaolimpustaq/' }
+  'marieta-bistro':             { relayUrl: 'https://marietabistro.com.br/sync-instagram.html',         handle: 'marieta_bistro',         instagramUrl: 'https://www.instagram.com/marieta_bistro/' },
+  'academia-olimpus':           { relayUrl: 'https://academiaolimpus.com.br/sync-instagram.html',       handle: 'academiaolimpustaq',     instagramUrl: 'https://www.instagram.com/academiaolimpustaq/' },
+  'pizza-kid':                  { relayUrl: 'https://pizzakidtaquaritinga.com.br/sync-instagram.html',  handle: 'pizzakidtaq',            instagramUrl: 'https://www.instagram.com/pizzakidtaq/' },
+  'casa-de-carnes-mais-sabor':  { relayUrl: 'https://casadecarnesmaissabor.com.br/sync-instagram.html', handle: 'casadecarnes.maissabor', instagramUrl: 'https://www.instagram.com/casadecarnes.maissabor/' }
 }
 
 function resolveConfig(restaurantSlug, instagramUrl) {
