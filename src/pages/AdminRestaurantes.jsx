@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../firebase'
-import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore'
+import { collection, getDocs, doc, setDoc, deleteDoc, updateDoc, getDoc } from 'firebase/firestore'
 import { CLIENT_TYPE_LIST, getClientType, colorClasses, ALL_TYPE_DOC_IDS } from '../lib/clientTypes'
 
 export default function AdminRestaurantes() {
@@ -11,6 +11,9 @@ export default function AdminRestaurantes() {
   const [form, setForm] = useState({ name: '', slug: '', type: 'restaurante' })
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
+  const [editTypeFor, setEditTypeFor] = useState(null)
+  const [newType, setNewType] = useState('')
+  const [savingType, setSavingType] = useState(false)
 
   async function loadRestaurants() {
     const snap = await getDocs(collection(db, 'restaurants'))
@@ -63,6 +66,40 @@ export default function AdminRestaurantes() {
       setError('Erro: ' + err.message)
     }
     setCreating(false)
+  }
+
+  function openTypeEditor(r) {
+    setEditTypeFor(r)
+    setNewType(r.type || 'restaurante')
+  }
+
+  async function handleSaveType() {
+    if (!editTypeFor || newType === editTypeFor.type) {
+      setEditTypeFor(null)
+      return
+    }
+    setSavingType(true)
+    try {
+      const slug = editTypeFor.slug
+      await updateDoc(doc(db, 'restaurants', slug), { type: newType })
+
+      const typeDef = getClientType(newType)
+      const docs = typeDef.initDocs({ name: editTypeFor.name, slug })
+      const now = new Date().toISOString()
+      await Promise.all(docs.map(async d => {
+        const ref = doc(db, 'restaurants', slug, 'data', d.docId)
+        const snap = await getDoc(ref)
+        if (!snap.exists()) {
+          await setDoc(ref, { content: d.content, updatedAt: now })
+        }
+      }))
+
+      setEditTypeFor(null)
+      loadRestaurants()
+    } catch (err) {
+      alert('Erro ao trocar tipo: ' + err.message)
+    }
+    setSavingType(false)
   }
 
   async function handleDelete(slug, name) {
@@ -191,9 +228,14 @@ export default function AdminRestaurantes() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="font-semibold text-slate-800">{r.name}</h3>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${cls.badge}`}>
-                      {typeDef.emoji} {typeDef.label}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => openTypeEditor(r)}
+                      title="Alterar tipo"
+                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${cls.badge} hover:opacity-80 cursor-pointer`}
+                    >
+                      {typeDef.emoji} {typeDef.label} ✎
+                    </button>
                   </div>
                   <p className="text-xs text-slate-400 font-mono">/{r.slug}</p>
                 </div>
@@ -222,6 +264,66 @@ export default function AdminRestaurantes() {
           )
         })}
       </div>
+
+      {editTypeFor && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => !savingType && setEditTypeFor(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">Alterar tipo</h2>
+                <p className="text-sm text-slate-500">{editTypeFor.name}</p>
+              </div>
+              <button onClick={() => !savingType && setEditTypeFor(null)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {CLIENT_TYPE_LIST.map(t => {
+                  const tcls = colorClasses(t.color)
+                  const selected = newType === t.id
+                  return (
+                    <label
+                      key={t.id}
+                      className={`flex items-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition ${selected ? tcls.radio : 'border-slate-200 hover:border-slate-300'}`}
+                    >
+                      <input
+                        type="radio"
+                        name="edit-type"
+                        value={t.id}
+                        checked={selected}
+                        onChange={e => setNewType(e.target.value)}
+                        className={tcls.accent}
+                      />
+                      <div>
+                        <span className="text-sm font-medium text-slate-800">{t.emoji} {t.label}</span>
+                        <p className="text-[11px] text-slate-400">{t.description}</p>
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-slate-400">
+                Os documentos existentes (cardápio, veículos, etc.) são preservados. Documentos faltantes do novo tipo são criados vazios. Para limpar dados antigos, edite-os manualmente.
+              </p>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={handleSaveType}
+                  disabled={savingType || newType === editTypeFor.type}
+                  className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2.5 rounded-xl text-sm transition disabled:opacity-50"
+                >
+                  {savingType ? 'Salvando…' : 'Salvar'}
+                </button>
+                <button
+                  onClick={() => setEditTypeFor(null)}
+                  disabled={savingType}
+                  className="flex-1 border border-slate-200 text-slate-600 font-semibold py-2.5 rounded-xl text-sm hover:bg-slate-50 transition disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
