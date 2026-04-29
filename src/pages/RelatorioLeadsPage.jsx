@@ -141,7 +141,7 @@ function KpiCard({ label, value, sub, hidden }) {
   )
 }
 
-function BarChartByDay({ buckets }) {
+function BarChartByDay({ buckets, hidden }) {
   const max = Math.max(...buckets.map(b => b.count), 1)
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-5">
@@ -156,7 +156,7 @@ function BarChartByDay({ buckets }) {
             />
             {buckets.length <= 14 && (
               <span className="text-[9px] text-slate-400 truncate w-full text-center">
-                {fmtDay(date + 'T00:00:00')}
+                {hidden ? '••/••' : fmtDay(date + 'T00:00:00')}
               </span>
             )}
           </div>
@@ -315,7 +315,7 @@ export default function RelatorioLeadsPage() {
 
           {/* Gráficos */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <BarChartByDay buckets={daily} />
+            <BarChartByDay buckets={daily} hidden={hidden} />
             <SourceChart dist={dist} total={leads.length} hidden={hidden} />
           </div>
 
@@ -344,7 +344,7 @@ export default function RelatorioLeadsPage() {
                   <tbody className="divide-y divide-slate-100">
                     {paginated.map(lead => (
                       <tr key={lead.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap text-xs">{fmtDate(lead.ts)}</td>
+                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap text-xs">{hidden ? '••/••/•••• ••:••' : fmtDate(lead.ts)}</td>
                         <td className="px-4 py-3">
                           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                             lead.type === 'whatsapp_click' ? 'bg-green-100 text-green-700' :
