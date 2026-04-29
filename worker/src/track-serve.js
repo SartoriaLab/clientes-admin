@@ -3,16 +3,18 @@
 export const TRACK_JS = `(function () {
   'use strict';
 
-  // Configuração: descobre a URL do Worker a partir do atributo data-worker
-  // do próprio <script>, ou usa o fallback de produção.
+  // Configuração: descobre o <script> pelo padrão da URL (async invalida currentScript).
   var scriptTag = document.currentScript || (function () {
-    var scripts = document.getElementsByTagName('script');
-    return scripts[scripts.length - 1];
+    var all = document.getElementsByTagName('script');
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].src && all[i].src.indexOf('/track.js') !== -1) return all[i];
+    }
+    return null;
   })();
 
   var WORKER_URL = (scriptTag && scriptTag.getAttribute('data-worker')) ||
-    'https://clientes-sync.workers.dev';
-  var TENANT = (scriptTag && new URL(scriptTag.src).searchParams.get('t')) || '';
+    'https://clientes-sync.julianodev.workers.dev';
+  var TENANT = (scriptTag && scriptTag.src && new URL(scriptTag.src).searchParams.get('t')) || '';
 
   var STORAGE_KEY = '_cd'; // attribution data (first-touch, 30d)
   var SESSION_KEY = '_cs'; // session id (30d)
