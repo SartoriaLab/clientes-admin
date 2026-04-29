@@ -109,3 +109,11 @@ export function IconChevronRight() {
     </svg>
   )
 }
+
+export function IconFunnel() {
+  return (
+    <svg className={base} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h18l-7 8v6l-4-2V12L3 4z" />
+    </svg>
+  )
+}

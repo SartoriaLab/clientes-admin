@@ -4,7 +4,7 @@ import { buildNavItems } from './navItems'
 import {
   IconGrid, IconBuilding, IconUsers, IconMenu, IconTag, IconInfo,
   IconCar, IconShirt, IconCreditCard, IconLogout,
-  IconChevronLeft, IconChevronRight,
+  IconChevronLeft, IconChevronRight, IconFunnel,
 } from './icons'
 
 const ICON_MAP = {
@@ -17,6 +17,7 @@ const ICON_MAP = {
   car: <IconCar />,
   shirt: <IconShirt />,
   creditCard: <IconCreditCard />,
+  funnel: <IconFunnel />,
 }
 
 // Sidebar shell shared across the three variants.

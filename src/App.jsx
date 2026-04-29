@@ -15,6 +15,7 @@ const AdminRestaurantes = lazy(() => import('./pages/AdminRestaurantes'))
 const AdminUsuarios = lazy(() => import('./pages/AdminUsuarios'))
 const GestaoClientesPage = lazy(() => import('./pages/GestaoClientesPage'))
 const RelatorioSEOPage = lazy(() => import('./pages/RelatorioSEOPage'))
+const RelatorioLeadsPage = lazy(() => import('./pages/RelatorioLeadsPage'))
 
 function PageFallback() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
             <Route path="/admin/usuarios" element={<ProtectedRoute adminOnly><AdminUsuarios /></ProtectedRoute>} />
             <Route path="/admin/gestao" element={<ProtectedRoute adminOnly><GestaoClientesPage /></ProtectedRoute>} />
             <Route path="/admin/relatorio-seo/:slug" element={<ProtectedRoute adminOnly><RelatorioSEOPage /></ProtectedRoute>} />
+            <Route path="/restaurante/:slug/leads" element={<RelatorioLeadsPage />} />
           </Route>
         </Routes>
       </Suspense>

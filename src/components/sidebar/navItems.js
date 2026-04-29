@@ -27,9 +27,8 @@ export function buildNavItems({ isAdmin, slug, clientType, clientName }) {
 
   if (slug) {
     const items = getClientType(clientType).sidebarItems({ slug })
-    if (items.length > 0) {
-      sections.push({ kind: 'client', title: clientName || '', items })
-    }
+    items.push({ to: `/restaurante/${slug}/leads`, iconKey: 'funnel', label: 'Leads' })
+    sections.push({ kind: 'client', title: clientName || '', items })
   }
 
   return sections

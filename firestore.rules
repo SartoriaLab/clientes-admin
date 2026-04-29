@@ -30,6 +30,13 @@ service cloud.firestore {
         allow write: if isAdmin() || ownsRestaurant(slug);
       }
 
+      // Leads: apenas admin e owner leem (contêm UTMs/UA/referrer)
+      // Worker escreve via service account (bypassa rules)
+      match /leads/{leadId} {
+        allow read: if isAdmin() || ownsRestaurant(slug);
+        allow write: if false;
+      }
+
       match /{subcollection}/{docId} {
         allow read: if true;
         allow write: if isAdmin() || ownsRestaurant(slug);
