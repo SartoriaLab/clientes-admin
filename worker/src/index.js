@@ -43,7 +43,8 @@ const TENANTS_FALLBACK = {
   'https://pizzakidtaquaritinga.com.br':     { slug: 'pizza-kid', instagramUrl: 'https://www.instagram.com/pizzakidtaq/', handle: 'pizzakidtaq' },
   'https://www.pizzakidtaquaritinga.com.br': { slug: 'pizza-kid', instagramUrl: 'https://www.instagram.com/pizzakidtaq/', handle: 'pizzakidtaq' },
   'https://casadecarnesmaissabor.com.br':     { slug: 'casa-de-carnes-mais-sabor', instagramUrl: 'https://www.instagram.com/casadecarnes.maissabor/', handle: 'casadecarnes.maissabor' },
-  'https://www.casadecarnesmaissabor.com.br': { slug: 'casa-de-carnes-mais-sabor', instagramUrl: 'https://www.instagram.com/casadecarnes.maissabor/', handle: 'casadecarnes.maissabor' }
+  'https://www.casadecarnesmaissabor.com.br': { slug: 'casa-de-carnes-mais-sabor', instagramUrl: 'https://www.instagram.com/casadecarnes.maissabor/', handle: 'casadecarnes.maissabor' },
+  'https://sartorialab.github.io':            { slug: 'wilsons-pizzaria',           instagramUrl: 'https://www.instagram.com/wilsonpizzastq/',           handle: 'wilsonpizzastq' }
 };
 
 // Cache em memória do Worker (TTL 5min) pra evitar GET Firestore a cada request
