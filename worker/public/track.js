@@ -137,10 +137,11 @@
 
     // Usa sendBeacon quando disponível (não bloqueia navegação)
     if (navigator.sendBeacon) {
-      var blob = new Blob([body], { type: 'application/json' });
+      // text/plain evita preflight CORS (safelisted content-type) — handleLead usa request.json()
+      var blob = new Blob([body], { type: 'text/plain;charset=UTF-8' });
       navigator.sendBeacon(url, blob);
     } else {
-      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true })
+      fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: body, keepalive: true })
         .catch(function () { /* silencia erros de rede */ });
     }
   }

@@ -152,7 +152,7 @@ function BarChartByDay({ buckets, hidden }) {
             <div
               className="w-full rounded-t bg-amber-400 transition-all"
               style={{ height: `${Math.max(2, (count / max) * 56)}px` }}
-              title={`${date}: ${count}`}
+              title={hidden ? undefined : `${date}: ${count}`}
             />
             {buckets.length <= 14 && (
               <span className="text-[9px] text-slate-400 truncate w-full text-center">
